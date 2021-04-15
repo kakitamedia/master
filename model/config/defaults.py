@@ -1,0 +1,12 @@
+from yacs.config import CfgNode as CN
+
+_C = CN()
+
+_C.SOLVER = CN()
+_C.SOLVER.LR = 1e-4
+_C.SOLVER.BATCH_SIZE = 32
+_C.SOLVER.MAX_ITER = 500000
+_C.SOLVER.SYNC_BATCHNORM = True
+
+_C.OUTPUT_DIR = ''
+_C.SEED = 123
