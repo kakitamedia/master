@@ -131,6 +131,8 @@ dmypy.json
 # another git repositorys
 ext/
 DCNv2/
+# DCNv2/build/
+# DCNv2/DCNv2.egg-info
 
 # others
 output/

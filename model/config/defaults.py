@@ -1,10 +1,6 @@
 from yacs.config import CfgNode as CN
 import os
 
-# hostname = os.uname()[1]
-# if not hostname in ['dl10', 'dl30', 'dl31']:
-
-hostname = 'dl001'
 
 _C = CN()
 
@@ -80,7 +76,7 @@ _C.TEST.AE_TRAIN_ITERATION = 50000
 _C.TEST.AE_TRAIN_BATCH_SIZE = 32
 _C.TEST.AE_TRAIN_LR = 1e-4
 
-_C.OUTPUT_DIR = os.path.join('output', hostname)
+_C.OUTPUT_DIR = 'output'
 # _C.PRETRAINED_MODEL = 'weights/multiscale_centernet_pretrain.pth'
 _C.PRETRAINED_MODEL = 'weights/temp.pth'
 

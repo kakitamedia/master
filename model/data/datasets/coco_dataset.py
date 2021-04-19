@@ -8,7 +8,6 @@ from joblib import Parallel, delayed
 from torch.utils.data import Dataset
 
 from copy import copy
-from overlay_heatmap import OverlayHeatmap
 
 
 class COCODataset(Dataset):
@@ -46,7 +45,6 @@ class COCODataset(Dataset):
         self.coco_id_to_contiguous_id = {coco_id: i + 1 for i, coco_id in enumerate(coco_categories)}
         self.contiguous_id_to_coco_id = {v: k for k, v in self.coco_id_to_contiguous_id.items()}
 
-        self.overlay_heatmap = OverlayHeatmap()
 
         num_workers = 24
         # self.images = self.load_all_images(num_workers)

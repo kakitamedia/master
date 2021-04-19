@@ -1,12 +1,7 @@
 import os
 
-hostname = os.uname()[1]
-if not hostname in ['dl10', 'dl20', 'dl30', 'dl31']:
-    hostname = 'dl001'
-    # hostname = 'local'
-
 class DatasetCatalog:
-    DATA_DIR = 'datasets/{}'.format(hostname)
+    DATA_DIR = 'datasets/'
     DATASETS = {
         'voc_2007_train': {
             "data_dir": "voc/VOC2007",

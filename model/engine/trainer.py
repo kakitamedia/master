@@ -100,7 +100,7 @@ def do_train(args, cfg, model, optimizer, d_optimizer, train_loader, device, sum
             logging_d_loss = [0] * len(cfg.MODEL.DOWN_RATIOS)
             tic = time.time()
 
-        if iteration % args.save_step == 0 and not cfg.DEBUG:
+        if iteration % args.save_step == 0 and not args.debug:
             extractor_path = os.path.join(cfg.OUTPUT_DIR, 'extractor', 'iteration_{}.pth'.format(iteration))
             detector_path = os.path.join(cfg.OUTPUT_DIR, 'detector', 'iteration_{}.pth'.format(iteration))
             optimizer_path = os.path.join(cfg.OUTPUT_DIR, 'optimizer', 'iteration_{}.pth'.format(iteration))

@@ -90,7 +90,7 @@ def train(args, cfg):
         model = torch.nn.DataParallel(model, device_ids=list(range(args.num_gpus)))
 
     # if args.tensorboard and not cfg.DEBUG:
-    if not cfg.DEBUG:
+    if not args.debug:
         summary_writer = SummaryWriter(log_dir=cfg.OUTPUT_DIR)
     else:
         summary_writer = None
@@ -114,6 +114,7 @@ def main():
     parser.add_argument('--resume_iter', type=int, default=0)
     parser.add_argument('--pretrained_extractor', type=str, default='')
     parser.add_argument('--pretrained_detector', type=str, default='')
+    parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
     
     torch.manual_seed(cfg.SEED)
@@ -139,7 +140,7 @@ def main():
     cfg.freeze()
 
     print('Running with config:\n{}'.format(cfg))
-    if not cfg.DEBUG and args.resume_iter == 0:
+    if not args.debug and args.resume_iter == 0:
         os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
         shutil.copy2(args.config_file, os.path.join(cfg.OUTPUT_DIR, 'config.yaml'))
 
