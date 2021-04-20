@@ -7,7 +7,7 @@ import torch.nn as nn
 
 
 def do_train(args, cfg, model, optimizer, d_optimizer, train_loader, device, summary_writer):
-    max_iter = len(train_loader) + args.resume_iter
+    max_iter = len(train_loader) - args.resume_iter
     trained_time = 0
     tic = time.time()
     end = time.time()
