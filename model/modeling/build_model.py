@@ -11,6 +11,7 @@ from .resnet import get_resnet18
 from .discriminator import Discriminator, UNetDiscriminator, BeganDiscriminator
 from model.engine.loss_functions import DetectorLoss, DiscriminatorLoss, CenterNetLoss, ReconstructionLoss
 from model.utils.misc import fix_model_state_dict
+from model.utils.overlay_heatmap import OverlayHeatmap
 
 from model.modeling.extractor import *
 from model.modeling.resnet import DetectionCore as CenterNet
@@ -53,6 +54,10 @@ class ModelWithLoss(nn.Module):
 
         self.gradient_penalty = cfg.SOLVER.GRADIENT_PENALTY
         self.gradient_penalty_weight = cfg.SOLVER.GRADIENT_PENALTY_WEIGHT
+
+        self.overley = OverlayHeatmap()
+        self.explosion_check_thresh = 10.
+        self.explosion_counter = 0
 
 
     def forward(self, x, i, target=None):
@@ -127,6 +132,13 @@ class ModelWithLoss(nn.Module):
         # Return gradient penalty
         return ((gradients_norm - 1) ** 2).mean()
 
+
+    def _explosion_check(loss, x, pred, targets):
+        if loss > self.explosion_check_thresh:
+            self.explosion_counter += 1
+            for i in range(len(x)):
+                self.overlay(x[i], targets[i]['hm'])
+                self.overlay(x[i], preds[i]['hm'])
 
 
 
