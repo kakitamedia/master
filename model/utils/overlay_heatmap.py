@@ -11,14 +11,17 @@ class Compose(object):
             img = t(img)
 
         return img
+        
 
 class ToNumpy(object):
     def __call__(self, image):
         return image.numpy().transpose((1, 2, 0))
 
+
 class ConvertToInts(object):
     def __call__(self, image):
         return np.clip(image, 0, 255).astype(np.uint8)
+
 
 class Denormalize(object):
     def __init__(self):
@@ -31,6 +34,7 @@ class Denormalize(object):
         image = image*255
 
         return image
+
 
 class Resize(object):
     def __init__(self, size=512):  
