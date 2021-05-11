@@ -106,18 +106,26 @@ class DetectorLoss(nn.Module):
         elif cfg.MODEL.D_LOSS_TYPE == 'hinge':
             self.adv_loss_fn = HingeLoss(d_train=False)
 
+        self.contents_loss_fn = nn.L1Loss()
+        self.style_loss_fn = StyleLoss()
 
-    def forward(self, det_pred, target, adv_pred, feature, i):
-        det_loss = self.det_loss_fn(det_pred, target)
-        if adv_pred is None:
-            return det_loss
 
-        if isinstance(self.adv_loss_fn, ReconstructionLoss):
-            adv_loss = self.adv_loss_fn(adv_pred, feature)
-        else:
-            adv_loss = self.adv_loss_fn(adv_pred, i)
+    def forward(self, det_preds, targets, adv_preds, features):
+        assert len(det_preds) == len(adv_preds)
+        det_loss = []
+        adv_loss = []
+        contents_loss = []
+        style_loss = []
 
-        return det_loss, adv_loss
+        for i in range(len(det_preds)):
+            det_loss.append(self.det_loss_fn(det_preds[i], targets[i]))
+            adv_loss.append(self.adv_loss_fn(adv_preds[i], i))
+
+        for i in range(len(features)):
+            contents_loss.append(self.contents_loss_fn(features[i-1], features[i]))
+            style_loss.append(self.style_loss_fn(features[i-1], features[i]))
+
+        return det_loss, adv_loss, contents_loss, style_loss
 
 
 class DiscriminatorLoss(nn.Module):
@@ -133,13 +141,37 @@ class DiscriminatorLoss(nn.Module):
         elif cfg.MODEL.D_LOSS_TYPE == 'hinge':
             self.adv_loss_fn = HingeLoss(d_train=True)
 
-    def forward(self, adv_pred, feature, i):
-        if isinstance(self.adv_loss_fn, ReconstructionLoss):
-            adv_loss = self.adv_loss_fn(adv_pred, feature)
-        else:
-            adv_loss = self.adv_loss_fn(adv_pred, i)
+    def forward(self, adv_preds):
+        adv_loss = []
+        for i in range(len(adv_preds)):
+            adv_loss.append(self.adv_loss_fn(adv_preds[i], i))
 
         return adv_loss
+
+
+class StyleLoss(nn.Module):
+    def __init__(self):
+        super(StyleLoss, self).__init__()
+
+        self.loss_fn = nn.L1Loss()
+
+    def forward(self, feat1, feat2):
+        loss = self.loss_fn(self._gram_matrix(feat1), self._gram_matrix(feat2))
+
+        return loss
+
+    def _gram_matrix(self, x):
+        a, b, c, d = x.size()  # a=batch size(=1)
+        # b=number of feature maps
+        # (c,d)=dimensions of a f. map (N=c*d)
+
+        features = x.view(a * b, c * d)  # resise F_XL into \hat F_XL
+
+        G = torch.mm(features, features.t())  # compute the gram product
+
+        # we 'normalize' the values of the gram matrix
+        # by dividing by the number of element in each feature maps.
+        return G.div(a * b * c * d)
 
 
 class BCELoss(nn.Module):
@@ -149,6 +181,7 @@ class BCELoss(nn.Module):
         self.d_train = d_train
 
     def forward(self, prediction, i):
+        print(self.temp.device)
         loss = 0
 
         if type(prediction) != list:
@@ -167,6 +200,7 @@ class BCELoss(nn.Module):
             loss += self.loss_fn(prediction[j], label)
 
         return loss / len(prediction)
+
 
 class WassersteinLoss(nn.Module):
     def __init__(self, d_train):

@@ -2,164 +2,188 @@ import torch
 import torch.nn as nn
 import math
 
-class DenseBlock(torch.nn.Module):
+from mmcv.ops.deform_conv import DeformConv2d
+
+
+class BlockBase(nn.Module):
+    def __init__(self, bias, activation, norm):
+        super(BlockBase, self).__init__()
+
+        ### Nomalizing layer
+        if self.norm =='batch':
+            self.norm = nn.BatchNorm2d(output_dim)
+        elif self.norm == 'instance':
+            self.norm = nn.InstanceNorm2d(output_dim)
+        elif self.norm == 'group':
+            self.norm = nn.GroupNorm(32, output_dim)
+        elif self.norm == 'spectral':
+            self.norm = None
+            self.layer = nn.utils.spectral_norm(self.layer)
+        elif norm == None:
+            self.norm = None
+
+        ### Activation layer
+        if activation == 'relu':
+            self.act = nn.ReLU(True)
+        elif activation == 'prelu':
+            self.act = nn.PReLU(init=0.01)
+        elif activation == 'lrelu':
+            self.act = nn.LeakyReLU(0.01, True)
+        elif activation == 'tanh':
+            self.act = nn.Tanh()
+        elif activation == 'sigmoid':
+            self.act = nn.Sigmoid()
+        elif activaton == None:
+            self.act = None
+
+        ### Initialize weights
+        if activation == 'relu':
+            nn.init.kaiming_normal_(self.layer.weight, nonlinearity='relu')
+        elif activaton == 'prelu' or activation == 'lrelu':
+            nn.init.kaiming_normal_(self.layer.weight, a=0.01, nonlinearity='leaky_relu')
+        elif activation == 'tanh':
+            nn.init.xavier_normal_(self.layer.weight, gain=5/3)
+        else:
+            nn.init.xavier_normal_(self.layer.weight, gain=1)
+
+        if bias:
+            nn.init.zeros_(self.layer.bias)
+
+    def forward(self, x):
+        x = self.layer(x)
+
+        if self.norm is not None:
+            x = self.norm(x)
+
+        if self.act is not None:
+            x = self.act(x)      
+
+        return x
+
+
+class DenseBlock(BlockBase):
     def __init__(self, input_dim, output_dim, bias=False, activation='relu', norm='batch'):
-        super(DenseBlock, self).__init__()
-        self.fc = torch.nn.Linear(input_dim, output_dim, bias=bias)
+        self.layer = nn.Linear(input_dim, output_dim, bias=bias)
+        super(BlockBase, self).__init__(bias, activation, norm)
 
+        ### Overwrite normalizing layer for 1D version
         self.norm = norm
         if self.norm =='batch':
-            self.bn = torch.nn.BatchNorm1d(output_dim)
+            self.norm = nn.BatchNorm1d(output_dim)
         elif self.norm == 'instance':
-            self.bn = torch.nn.InstanceNorm1d(output_dim)
-        elif self.norm == 'group':
-            self.bn = torch.nn.GroupNorm(32, output_dim)
-        elif self.norm == 'spectral':
-            self.fc = nn.utils.spectral_norm(self.fc)
-
-        self.activation = activation
-        if self.activation == 'relu':
-            self.act = torch.nn.ReLU(True)
-        elif self.activation == 'prelu':
-            self.act = torch.nn.PReLU()
-        elif self.activation == 'lrelu':
-            self.act = torch.nn.LeakyReLU(0.2, True)
-        elif self.activation == 'tanh':
-            self.act = torch.nn.Tanh()
-        elif self.activation == 'sigmoid':
-            self.act = torch.nn.Sigmoid()
-        elif self.actiation == 'elu':
-            self.act = torch.nn.ELU()
-
-    def forward(self, x):
-        if self.norm is not None and self.norm is not 'spectral':
-            out = self.bn(self.fc(x))
-        else:
-            out = self.fc(x)
-
-        if self.activation is not None:
-            return self.act(out)
-        else:
-            return out
+            self.norm = nn.InstanceNorm1d(output_dim)
 
 
-class ConvBlock(torch.nn.Module):
+class ConvBlock(BlockBase):
     def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=0, dilation=1, groups=1, bias=False, activation='relu', norm=None):
-        super(ConvBlock, self).__init__()
-
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-
-        self.conv = torch.nn.Conv2d(input_dim, output_dim, kernel_size, stride, padding, dilation, groups, bias=bias)
-
-        self.norm = norm
-        if self.norm =='batch':
-            self.bn = torch.nn.BatchNorm2d(output_dim)
-        elif self.norm == 'instance':
-            self.bn = torch.nn.InstanceNorm2d(output_dim)
-        elif self.norm == 'group':
-            self.bn = torch.nn.GroupNorm(32, output_dim)
-        elif self.norm == 'spectral':
-            self.conv = nn.utils.spectral_norm(self.conv)
-
-        self.activation = activation
-        if self.activation == 'relu':
-            self.act = torch.nn.ReLU(True)
-        elif self.activation == 'prelu':
-            self.act = torch.nn.PReLU()
-        elif self.activation == 'lrelu':
-            self.act = torch.nn.LeakyReLU(0.2, True)
-        elif self.activation == 'tanh':
-            self.act = torch.nn.Tanh()
-        elif self.activation == 'sigmoid':
-            self.act = torch.nn.Sigmoid()
-        elif self.activation == 'elu':
-            self.act = torch.nn.ELU()
-
-    def forward(self, x):
-        if self.norm is not None and self.norm is not 'spectral':
-            out = self.bn(self.conv(x))
-        else:
-            out = self.conv(x)
-
-        if self.activation is not None:
-            return self.act(out)
-        else:
-            return out
+        self.layer = nn.Conv2d(input_dim, output_dim, kernel_size, stride, padding, dilation, groups, bias=bias)
+        super(BlockBase, self).__init__(bias, activation, norm)
 
 
-class DeconvBlock(torch.nn.Module):
-    def __init__(self, input_dim, output_dim, kernel_size=4, stride=2, padding=1, bias=False, activation='relu', norm=None):
-        super(DeconvBlock, self).__init__()
+class DeconvBlock(BlockBase):
+    def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=0, dilation=1, groups=1, bias=False, activation='relu', norm=None):
+        self.layer = nn.ConvTranspose2d(input_dim, output_dim, kernel_size, stride, padding, dilation, groups, bias=bias)
+        super(BlockBase, self).__init__(bias, activation, norm)
 
-        self.input_dim = input_dim
-        self.output_dim = output_dim
 
-        self.deconv = torch.nn.ConvTranspose2d(input_dim, output_dim, kernel_size, stride, padding, bias=bias)
-
-        self.norm = norm
-        if self.norm == 'batch':
-            self.bn = torch.nn.BatchNorm2d(output_dim)
-        elif self.norm == 'instance':
-            self.bn = torch.nn.InstanceNorm2d(output_dim)
-        elif self.norm == 'group':
-            self.bn = torch.nn.GroupNorm(32, output_dim)
-        elif self.norm == 'spectral':
-            self.deconv = nn.utils.spectral_norm(self.deconv)
-
-        self.activation = activation
-        if self.activation == 'relu':
-            self.act = torch.nn.ReLU(True)
-        elif self.activation == 'prelu':
-            self.act = torch.nn.PReLU()
-        elif self.activation == 'lrelu':
-            self.act = torch.nn.LeakyReLU(0.2, True)
-        elif self.activation == 'tanh':
-            self.act = torch.nn.Tanh()
-        elif self.activation == 'sigmoid':
-            self.act = torch.nn.Sigmoid()
-        elif self.activation == 'elu':
-            self.act = torch.nn.ELU()
-
-    def forward(self, x):
-        if self.norm is not None and self.norm is not 'spectral':
-            out = self.bn(self.deconv(x))
-        else:
-            out = self.deconv(x)
-
-        if self.activation is not None:
-            return self.act(out)
-        else:
-            return out
+class DeformableConvBlock(BlockBase):
+    def __init__(input_dim, output_dim, offset_dim=None, kernel_size=3, stride=1, padding=1, deform_groups=1, bias=False, activation='relu', norm=None):
+        if offsett_dim is None:
+            offset_dim = input_dim
+        
+        self.layer = DeformConv2d(input_dim, output_dim, kernel_size, stride, padding, bias=bias)
+        self.offset_conv = nn.Conv2d(offset_dim, deform_groups * 2 * kernel_size**2, kernel_size, stride, padding, bias=True)
             
+        self.offset_conv.weight.data.zero_()
+        self.offset_conv.bias.data.zero_()
 
-class ResidualBlock(torch.nn.Module):
-    def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=1, bias=False, activation='relu', norm='batch'):
+        super(BlockBase, self).__init__(bias, activation, norm)
+
+
+    def forward(self, x, offset=None):
+        if offset is None:
+            offset = self.offset_conv(x)
+        else:
+            offset = self.offset_conv(offset)
+
+        x = self.layer(x, offset)
+
+        if self.norm is not None:
+            x = self.norm(x)
+
+        if self.act is not None:
+            x = self.act(x)      
+
+        return x
+
+class ResidualBlock(nn.Module):
+    def __init__(self, input_dim, output_dim, num_convs=2, kernel_size=3, stride=1, padding=1, bias=False, activation='relu', norm=None):
         super(ResidualBlock, self).__init__()
-        self.input_dim = input_dim
-        self.output_dim = output_dim
 
-        self.conv1 = ConvBlock(input_dim, output_dim, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias, activation=activation, norm=norm)
-        self.conv2 = ConvBlock(output_dim, output_dim, kernel_size=3, stride=1, padding=1, bias=bias, activation=None, norm=norm)
+        self.num_convs = num_convs
+
+        self.layers, self.norms, self.acts = [], [], []
+        self.layers.append(nn.Conv2d(input_dim, output_dim, kernel_size, stride, padding, bias=bias))
+        for _ in range(num_convs - 1):
+            self.layers.append(nn.Conv2d(output_dim, output_dim, kernel_size, stride, padding, bias=bias))
+
+        for i in range(num_convs):
+            ### Normalizing layer
+            if norm == 'batch':
+                self.norms.append(nn.BatchNorm2d(output_dim))
+            elif norm == 'instance':
+                self.norms.append(nn.InstansNorm2d(output_dim))
+            elif norm == 'group':
+                self.norms.append(nn.GroupNorm(32, output_dim))
+            elif norm == 'spectral':
+                self.norms.append(None)
+                self.layers[i] = nn.utils.spectral_norm(self.layers[i])
+            elif norm == None:
+                self.norms.append(None)
+            else:
+                raise Exception('norm={} is not implemented.'.format(norm))
+
+            ### Activation layer
+            if activation == 'relu':
+                self.acts.append(nn.ReLU(True))
+            elif activation == 'lrelu':
+                self.acts.append(nn.LeakyReLU(0.01, True))
+            elif activation == 'prelu':
+                self.acts.append(nn.PReLU(init=0.01))
+            elif activation == 'tanh':
+                self.acts.append(nn.Tanh())
+            elif activation == 'sigmoid':
+                self.acts.append(nn.Sigmoid())
+            elif activaton == None:
+                self.acts.append(None)
+            else:
+                raise Exception('activation={} is not implemented.'.format(activaton))
+
+            ### Initialize weights
+            if activation == 'relu':
+                nn.init.kaiming_normal_(self.layers[i].weight, nonlinearity='relu')
+            elif activation == 'lrelu' or activation == 'prelu':
+                nn.init.kaiming_normal_(self.layers[i].weight, a=0.01, nonlinearity='leaky_relu')
+            elif activation == 'tanh':
+                nn.init.xavier_normal_(self.layers[i].weight, gain=5/3)
+            elif activation == 'sigmoid':
+                nn.init.xavier_normal_(self.layers[i].weight, gain=1)
+            elif activation == None:
+                nn.init.xaview_normal_(self.layers[i].weight, gain=1)
+            else:
+                raise Exception('activation={} is not implemented.'.format(activaton))
+
+            if bias:
+                nn.init.zeros(self.layers[i].bias)
+
 
         if input_dim != output_dim or stride != 1:
-            self.skip_layer = ConvBlock(input_dim, output_dim, kernel_size=1, stride=stride, padding=0, bias=bias, activation=None, norm=norm)
+            self.skip_layer = nn.Conv2d(input_dim, output_dim, 1, stride, 0, bias=bias)
         else:
             self.skip_layer = None
 
-        self.activation = activation
-        if self.activation == 'relu':
-            self.act = torch.nn.ReLU(True)
-        elif self.activation == 'prelu':
-            self.act = torch.nn.PReLU()
-        elif self.activation == 'lrelu':
-            self.act = torch.nn.LeakyReLU(0.2, True)
-        elif self.activation == 'tanh':
-            self.act = torch.nn.Tanh()
-        elif self.activation == 'sigmoid':
-            self.act = torch.nn.Sigmoid()
-        elif self.activation == 'elu':
-            self.act = torch.nn.ELU()
+        if bias:
+            nn.init.zeros_(self.skip_layer.bias)
 
     def forward(self, x):
         if self.skip_layer is not None:
@@ -167,13 +191,84 @@ class ResidualBlock(torch.nn.Module):
         else:
             residual = x
 
-        x = self.conv1(x)
-        x = self.conv2(x)
+        for i in range(self.num_convs):
+            x = self.layers[i](x)
+
+            if i == self.num_convs - 1:
+                x = x + residual
+
+            if self.norms[i] is not None:
+                x = self.norms[i](x)
+            
+            if self.acts[i] is not None:
+                x = self.acts[i](x)
+
+        return x
+
+
+class FixUpResidualBlock(ResidualBlock):
+    def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=1, bias=False, activation='relu', norm=None, num_residuals=1):
+        super(ResidualBlock, self).__init__(self, input_dim, output_dim, kernel_size=kernel_size, stride=stride, padding=padding, bias=False, activation=activation, norm=norm)
+
+        for param in self.conv1.parameters():
+            param = param / ( num_residuals ** (1 / 2) )
+        self.conv2.weight.data.zero_()
+
+        if bias:
+            self.conv1_bias = nn.Parameter(torch.zeros(1))
+            self.conv2_bias = nn.Parameter(torch.zeros(1))
+            self.act1_bias = nn.Parameter(torch.zeros(1))
+            self.act2_bias = nn.Parameter(torch.zeros(1))
+        else:
+            self.conv1_bias = None
+            self.conv2_bias = None
+            self.act1_bias = None
+            self.act2_bias = None
+
+        self.multiplier = nn.Parameter(torch.ones(1))
+
+    def forward(self, x):
+        if self.skip_layer is not None:
+            residual = self.skip_layer(x)
+        else:
+            residual = x
+
+        if self.conv1_bias is not None:
+            x = x + self.conv1_bias
+
+        out = self.layer1(x)
+
+        if self.act1_bias is not None:
+            out = out + self.act1_bias
+
+        if self.norm1 is not None:
+            out = self.norm1(out)
+
+        if self.act1 is not None:
+            out = self.act1(out)
+
+        if self.conv2_bias is not None:
+            out = out + self.conv2_bias
+
+        out = self.layer2(out) * self.multiplier
+
+        if self.act2_bias is not None:
+            out = out + self.act2_bias
+
+        out = out + residual
+
+        if self.norm2 is not None:
+            out = self.norm2(out)
+
+        if self.act2 is not None:
+            out = self.act2(out)        
+
+        return out
         
-        return self.act(x + residual)
 
 
-class SFTBlock(torch.nn.Module):
+### Backups
+class SFTBlock(nn.Module):
     def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=1, bias=False, activation='relu', norm='batch'):
         super(SFTBlock, self).__init__()
         self.input_dim = input_dim
@@ -203,56 +298,17 @@ class SFTBlock(torch.nn.Module):
         return x * (1 + scale) + shift
 
 
-
-# class ResidualBlock(torch.nn.Module):
-#     def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=1, bias=False):
-#         super(ResidualBlock, self).__init__()
-#         self.input_dim = input_dim
-#         self.output_dim = output_dim
-
-#         self.conv1 = nn.Conv2d(input_dim, output_dim, kernel_size, stride=stride, padding=padding, bias=bias)
-#         self.bn1 = nn.BatchNorm2d(output_dim)
-#         self.act1 = nn.ReLU(True)
-#         self.conv2 = nn.Conv2d(output_dim, output_dim, kernel_size, stride=1, padding=padding, bias=bias)
-#         self.bn2 = nn.BatchNorm2d(output_dim)
-
-#         if input_dim != output_dim or stride != 1:
-#             self.skip_layer = nn.Sequential(
-#                 nn.Conv2d(input_dim, output_dim, 1, stride=stride, padding=0, bias=bias),
-#                 nn.BatchNorm2d(output_dim)
-#             )
-#         else:
-#             self.skip_layer = None
-
-#         self.act2 = nn.ReLU(True)
-
-
-#     def forward(self, x):
-#         if self.skip_layer is not None:
-#             residual = self.skip_layer(x)
-#         else:
-#             residual = x
-
-#         x = self.conv1(x)
-#         x = self.bn1(x)
-#         x = self.act1(x)
-#         x = self.conv2(x)
-#         x = self.bn2(x)
-        
-#         return self.act2(x + residual)
-
-
-class ResidualUpBlock(torch.nn.Module):
+class ResidualUpBlock(nn.Module):
     def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=1, bias=False):
         super(ResidualUpBlock, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
 
         self.conv1 = nn.ConvTranspose2d(input_dim, output_dim, 4, stride=2, padding=1, bias=bias)
-        self.bn1 = nn.BatchNorm2d(output_dim)
+        self.norm1 = nn.BatchNorm2d(output_dim)
         self.act1 = nn.ReLU(True)
         self.conv2 = nn.Conv2d(output_dim, output_dim, 3, stride=1, padding=1, bias=bias)
-        self.bn2 = nn.BatchNorm2d(output_dim)
+        self.norm2 = nn.BatchNorm2d(output_dim)
 
         if input_dim != output_dim or stride != 1:
             self.skip_layer = nn.Sequential(
@@ -272,34 +328,34 @@ class ResidualUpBlock(torch.nn.Module):
             residual = x
 
         x = self.conv1(x)
-        x = self.bn1(x)
+        x = self.norm1(x)
         x = self.act1(x)
         x = self.conv2(x)
-        x = self.bn2(x)
+        x = self.norm2(x)
         
         return self.act2(x + residual)
 
 
-class MargeBlock(torch.nn.Module):
+class MargeBlock(nn.Module):
     def __init__(self, dim, kernel_size=3, stride=1, padding=1, bias=False, activation='relu', norm='batch'):
         super(MargeBlock, self).__init__()
         self.conv1 = nn.Conv2d(dim, dim, kernel_size, stride=stride, padding=padding, bias=bias)
-        self.bn1 = nn.BatchNorm2d(dim)
+        self.norm1 = nn.BatchNorm2d(dim)
         self.conv2 = nn.Conv2d(dim, dim, kernel_size, stride=stride, padding=padding, bias=bias)
-        self.bn2 = nn.BatchNorm2d(dim)
+        self.norm2 = nn.BatchNorm2d(dim)
 
         if activation == 'relu':
             self.act = nn.ReLU(True)
 
     def forward(self, a, b):
-         a = self.bn1(self.conv1(a))
-         b = self.bn2(self.conv2(b))
+         a = self.norm1(self.conv1(a))
+         b = self.norm2(self.conv2(b))
 
          return self.act(a+b)
 
 
 
-class UpBlock(torch.nn.Module):
+class UpBlock(nn.Module):
     def __init__(self, num_filter, kernel_size=8, stride=4, padding=2, bias=False, activation='relu', norm=None):
         super(UpBlock, self).__init__()
         self.up_conv1 = DeconvBlock(num_filter, num_filter, kernel_size, stride, padding, bias=bias, activation=activation, norm=norm)
@@ -313,7 +369,7 @@ class UpBlock(torch.nn.Module):
         return h1 + h0
 
 
-class D_UpBlock(torch.nn.Module):
+class D_UpBlock(nn.Module):
     def __init__(self, num_filter, kernel_size=8, stride=4, padding=2, num_stages=1, bias=False, activation='relu', norm=None):
         super(D_UpBlock, self).__init__()
         self.conv = ConvBlock(num_filter*num_stages, num_filter, 1, 1, 0, bias=bias, activation=activation, norm=norm)
@@ -329,7 +385,7 @@ class D_UpBlock(torch.nn.Module):
         return h1 + h0
 
 
-class DownBlock(torch.nn.Module):
+class DownBlock(nn.Module):
     def __init__(self, num_filter, kernel_size=8, stride=4, padding=2, bias=False, activation='relu', norm=None):
         super(DownBlock, self).__init__()
         self.down_conv1 = ConvBlock(num_filter, num_filter, kernel_size, stride, padding, bias=bias, activation=activation, norm=norm)
@@ -343,7 +399,7 @@ class DownBlock(torch.nn.Module):
         return l1 + l0
 
 
-class D_DownBlock(torch.nn.Module):
+class D_DownBlock(nn.Module):
     def __init__(self, num_filter, kernel_size=8, stride=4, padding=2, num_stages=1, bias=False, activation='relu', norm=None):
         super(D_DownBlock, self).__init__()
         self.conv = ConvBlock(num_filter*num_stages, num_filter, 1, 1, 0, bias=bias, activation=activation, norm=norm)

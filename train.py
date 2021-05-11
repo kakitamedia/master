@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import MultiStepLR
 
 from model.utils.sync_batchnorm import convert_model
 
@@ -60,14 +61,14 @@ def train(args, cfg):
     #     model.model.load_state_dict(fix_model_state_dict(torch.load(cfg.PRETRAINED_MODEL, map_location=lambda storage, loc:storage)))
     #     print('Pretrained model was loaded from {}'.format(cfg.PRETRAINED_MODEL))
 
-    if len(args.pretrained_extractor) != 0:
-        print('Load Pretrained Extractor from {}'.format(args.pretrained_extractor))
-        model.extractors.load_state_dict(fix_model_state_dict(torch.load(args.pretrained_extractor)))
+    if len(cfg.PRETRAINED_EXTRACTOR) != 0:
+        print('Load Pretrained Extractor from {}'.format(cfg.PRETRAINED_EXTRACTOR))
+        model.extractors.load_state_dict(fix_model_state_dict(torch.load(cfg.PRETRAINED_EXTRACTOR)))
         # model.model.load_state_dict(fix_model_state_dict(torch.load(os.path.join(args.pretrained_model)))
 
-    if len(args.pretrained_detector) != 0:
-        print('Load Pretrained Detector from {}'.format(args.pretrained_detector))
-        model.detector.load_state_dict(fix_model_state_dict(torch.load(args.pretrained_detector)))
+    if len(cfg.PRETRAINED_DETECTOR) != 0:
+        print('Load Pretrained Detector from {}'.format(cfg.PRETRAINED_DETECTOR))
+        model.detector.load_state_dict(fix_model_state_dict(torch.load(cfg.PRETRAINED_DETECTOR)))
 
     if args.resume_iter != 0:
         print('Resume from {}'.format(os.path.join(cfg.OUTPUT_DIR, 'model', 'iteration_{}.pth'.format(args.resume_iter))))
@@ -103,7 +104,7 @@ def main():
     parser = argparse.ArgumentParser(description='Scale and Degradetion Specific Object Detection')
     parser.add_argument('--config_file', type=str, default='', metavar='FILE', help='path to config file')
     parser.add_argument('--output_dirname', type=str, default='', help='')
-    parser.add_argument('--num_workers', type=int, default=12, help='')
+    parser.add_argument('--num_workers', type=int, default=16, help='')
     parser.add_argument('--log_step', type=int, default=50, help='')
     parser.add_argument('--save_step', type=int, default=10000)
     parser.add_argument('--eval_step', type=int, default=9999999)
@@ -141,6 +142,9 @@ def main():
 
     print('Running with config:\n{}'.format(cfg))
     if not args.debug and args.resume_iter == 0:
+        if os.path.exists(cfg.OUTPUT_DIR):
+            print('WARNING: OUTPUT_DIR already exists.')
+            sleep(5)
         os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
         shutil.copy2(args.config_file, os.path.join(cfg.OUTPUT_DIR, 'config.yaml'))
 

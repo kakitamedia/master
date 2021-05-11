@@ -46,11 +46,11 @@ class ModelWithLoss(nn.Module):
             self.detector = CenterNet(18)
         elif cfg.MODEL.DETECTOR_TYPE == 'ssd':
             self.detector = SSD()
-        self.g_loss_fn = DetectorLoss(cfg)
+        self.det_loss_fn = DetectorLoss(cfg)
         
         self.discriminator = Discriminator(cfg, 3)
         # self.discriminator = UNetDiscriminator(cfg)
-        self.d_loss_fn = DiscriminatorLoss(cfg)
+        self.dis_loss_fn = DiscriminatorLoss(cfg)
 
         self.gradient_penalty = cfg.SOLVER.GRADIENT_PENALTY
         self.gradient_penalty_weight = cfg.SOLVER.GRADIENT_PENALTY_WEIGHT
@@ -60,45 +60,69 @@ class ModelWithLoss(nn.Module):
         self.explosion_counter = 0
 
 
-    def forward(self, x, i, target=None):
+    def forward(self, x, target=None):
         if target is None:
-            return self.d_forward(x)
+            return self.dis_forward(x)
 
         else:
-            return self.g_forward(x, target, i)
+            return self.det_forward(x, target)
 
+    def det_forward(self, x, targets):
+        det_preds, adv_preds, features = [], [], []
 
-    def g_forward(self, x, target, i):
-        x = x.to('cuda')
-        for k in target.keys():
-            target[k] = target[k].to('cuda')
-
-        feature = self.extractors[i](x)
-        det_pred = self.detector(feature)
-        adv_pred = self.discriminator(feature)
-
-        det_loss, adv_loss = self.g_loss_fn(det_pred, target, adv_pred, feature, i)
-
-        return det_loss, adv_loss
-
-
-    def d_forward(self, x):
-        d_loss = 0
-        features = []
         for i in range(len(x)):
-            x[i] = x[i].to('cuda')
+            x[i]= x[i].to('cuda', non_blocking=True)
+            for k in targets[i].keys():
+                targets[i][k] = targets[i][k].to('cuda', non_blocking=True)
 
             feature = self.extractors[i](x[i])
-            features.append(feature)
+            det_pred = self.detector(feature)
             adv_pred = self.discriminator(feature)
 
-            d_loss += self.d_loss_fn(adv_pred, feature, i) / len(x)
+            det_preds.append(det_pred)
+            adv_preds.append(adv_pred)
+            features.append(feature)
+
+        det_preds = tuple(det_preds)
+        adv_preds = tuple(adv_preds)
+        features = tuple(features)
+        
+        return self.det_loss_fn(det_preds, targets, adv_preds, features)
+
+
+    # def det_forward(self, x, target, i):
+    #     x = x.to('cuda')
+    #     for k in target.keys():
+    #         target[k] = target[k].to('cuda')
+
+    #     feature = self.extractors[i](x)
+    #     det_pred = self.detector(feature)
+    #     adv_pred = self.discriminator(feature)
+
+    #     det_loss, adv_loss = self.g_loss_fn(det_pred, target, adv_pred, feature, i)
+
+    #     return det_loss, adv_loss
+
+
+    def dis_forward(self, x):
+        features, adv_preds = [], []
+        for i in range(len(x)):
+            x[i] = x[i].to('cuda', non_blocking=True)
+
+            feature = self.extractors[i](x[i])
+            adv_pred = self.discriminator(feature)
+
+            features.append(feature)
+            adv_preds.append(adv_pred)
         
         if self.gradient_penalty:
+            gp = 0
             for i in range(len(features)):
-                d_loss += self.gradient_penalty_weight * self._gradient_penalty(features[i-1], features[i]) / len(features)
+                gp += self.gradient_penalty_weight * self._gradient_penalty(features[i-1], features[i]) / len(features)
 
-        return d_loss
+            return self.dis_loss_fn(adv_preds), gp
+
+        return self.dis_loss_fn(adv_preds)
 
 
     def _gradient_penalty(self, real_data, generated_data):
