@@ -1,155 +1,135 @@
 import argparse
-import datetime
+from model.data.transforms.data_preprocess import DummyTargetTransform, TrainTransform
 import os
-import random
+import shutil
 import numpy as np
+import datetime
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data.sampler import BatchSampler, SequentialSampler
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import MultiStepLR
 
-from model.utils.sync_batchnorm import convert_model
+from torch_optimizer import RAdam
 
 from model.config import cfg
+from model.engine.trainer import do_pretrain_for_mp, do_train
 from model.modeling.build_model import ModelWithLoss
-from model.data.transforms.data_preprocess import TrainTransform, TrainTargetTransform, TrainTragetTransform_ContentsMatch
-from model.data.datasets import build_dataset
-from model.engine.trainer import do_train
-from model.data import samplers
-from model.utils.misc import str2bool, fix_model_state_dict
-from model.engine.loss_functions import CenterNetLoss
+from model.data.samplers import IterationBasedBatchSampler
+from model.utils.sync_batchnorm import convert_model
+from model.utils.misc import str2bool, fix_model_state_dict, worker_init_fn
+from model.data.dataset import build_dataset
+from model.data.transforms.transforms import MakeHeatmap
+from model.data.transforms.data_preprocess import *
 
-import shutil
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='pytorch training code')
+    parser.add_argument('--config_file', type=str, default='', metavar='FILE', help='path to config file')
+    parser.add_argument('--debug', action='store_true', help='debug mode')
+    parser.add_argument('--output_dirname', type=str, default='', help='')
+    parser.add_argument('--log_step', type=int, default=50, help='')
+    parser.add_argument('--eval_step', type=int, default=0, help='')
+    parser.add_argument('--save_step', type=int, default=50000, help='')
+    parser.add_argument('--num_gpus', type=int, default=1, help='')
+    parser.add_argument('--num_workers', type=int, default=16, help='')
+    parser.add_argument('--resume_iter', type=int, default=0, help='')
+
+    return parser.parse_args()
 
 
 def train(args, cfg):
-    device = torch.device(cfg.MODEL.DEVICE)
-    model = ModelWithLoss(cfg).to(device)
+    model = ModelWithLoss(cfg).to('cuda')
     print('------------Model Architecture-------------')
     print(model)
 
     print('Loading Datasets...')
-    train_transform = TrainTransform(cfg)
-    if cfg.SOLVER.CONTENTS_MATCH:
-        target_transform = TrainTragetTransform_ContentsMatch(cfg)
-    else:
-        target_transform = TrainTargetTransform(cfg)
-    train_dataset = build_dataset(dataset_list=cfg.DATASETS.TRAIN, transform=train_transform, target_transform=target_transform)
-    sampler = torch.utils.data.RandomSampler(train_dataset)
-    batch_sampler = torch.utils.data.sampler.BatchSampler(sampler=sampler, batch_size=cfg.SOLVER.BATCH_SIZE, drop_last=True)
-    batch_sampler = samplers.IterationBasedBatchSampler(batch_sampler, num_iterations=cfg.SOLVER.MAX_ITER)
-    train_loader = DataLoader(train_dataset, num_workers=args.num_workers, batch_sampler=batch_sampler, pin_memory=True)
+    data_loader = {}
 
-    eval_transform = None
-    eval_target_transform = None
-    eval_dataset = build_dataset(dataset_list=cfg.DATASETS.VAL, transform=eval_transform, target_transform=target_transform)
+    train_transforms = [TrainTransform(cfg, cfg.MODEL.DOWN_RATIOS[i]) if i in cfg.MODEL.VALID_SCALE else DummyTransform() for i in range(len(cfg.MODEL.DOWN_RATIOS))]
+    # train_transforms = [TrainTransform(cfg, down_ratio) for down_ratio in cfg.MODEL.DOWN_RATIOS]
+    train_target_transforms = [MakeHeatmap(cfg.MODEL.NUM_CLASSES, cfg.SOLVER.DATA.MAX_OBJECTS, cfg.MODEL.DOWN_RATIOS[i]) if i in cfg.MODEL.VALID_SCALE else DummyTargetTransform() for i in range(len(cfg.MODEL.DOWN_RATIOS))]
+    # train_target_transforms = [MakeHeatmap(cfg.MODEL.NUM_CLASSES, cfg.SOLVER.DATA.MAX_OBJECTS, down_ratio) for down_ratio in cfg.MODEL.DOWN_RATIOS]
+    train_dataset = build_dataset(dataset_list=cfg.DATASET.TRAIN, transform=train_transforms, target_transform=train_target_transforms)
+    sampler = RandomSampler(train_dataset)
+    batch_sampler = BatchSampler(sampler=sampler, batch_size=cfg.SOLVER.BATCH_SIZE, drop_last=True)
+    batch_sampler = IterationBasedBatchSampler(batch_sampler, num_iterations=cfg.SOLVER.MAX_ITER)
+    train_loader = DataLoader(train_dataset, num_workers=args.num_workers, batch_sampler=batch_sampler, pin_memory=True, worker_init_fn=worker_init_fn)
 
-    if cfg.SOLVER.WEIGHT_FIX:
-        for param in model.model.parameters():
-            param.requires_grad = False
-        
-        for i in range(0, len(cfg.MODEL.DOWN_RATIOS)):
-            for param in model.model.init_convs[i].parameters():
-                param.requires_grad = True
-        
+    data_loader['train'] = train_loader
 
-    optimizer = torch.optim.Adam(list(model.extractors.parameters()) + list(model.detector.parameters()), lr=cfg.SOLVER.DETECTOR_LR)
-    d_optimizer = torch.optim.Adam(model.discriminator.parameters(), lr=cfg.SOLVER.DISCRIMINATOR_LR)
+    if args.eval_step != 0:
+        val_transforms = None
+        val_dataset = None
+        sampler = SequentialSampler(val_dataset)
+        batch_sampler = BatchSampler(sampler=sampler, batch_size=args._eval_batchsize, drop_last=False)
+        val_loader = DataLoader(val_dataset, num_workers=args.num_workers, batch_sampler=batch_sampler)
 
-    # if not args.scratch:
-    #     model.model.load_state_dict(fix_model_state_dict(torch.load(cfg.PRETRAINED_MODEL, map_location=lambda storage, loc:storage)))
-    #     print('Pretrained model was loaded from {}'.format(cfg.PRETRAINED_MODEL))
+        data_loader['val'] = val_loader
 
-    if len(cfg.PRETRAINED_EXTRACTOR) != 0:
-        print('Load Pretrained Extractor from {}'.format(cfg.PRETRAINED_EXTRACTOR))
-        model.extractors.load_state_dict(fix_model_state_dict(torch.load(cfg.PRETRAINED_EXTRACTOR)))
-        # model.model.load_state_dict(fix_model_state_dict(torch.load(os.path.join(args.pretrained_model)))
+    # optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, list(model.extractors.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
+    optimizer = RAdam(filter(lambda p:p.requires_grad, list(model.extractors.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
+    scheduler = MultiStepLR(optimizer, cfg.SOLVER.LR_DECAY)
+    # d_optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
+    d_optimizer = RAdam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
+    d_scheduler = MultiStepLR(d_optimizer, cfg.SOLVER.LR_DECAY)
 
-    if len(cfg.PRETRAINED_DETECTOR) != 0:
-        print('Load Pretrained Detector from {}'.format(cfg.PRETRAINED_DETECTOR))
-        model.detector.load_state_dict(fix_model_state_dict(torch.load(cfg.PRETRAINED_DETECTOR)))
+    scaler = torch.cuda.amp.GradScaler(enabled=cfg.MIXED_PRECISION)
 
     if args.resume_iter != 0:
         print('Resume from {}'.format(os.path.join(cfg.OUTPUT_DIR, 'model', 'iteration_{}.pth'.format(args.resume_iter))))
-        model.extractors.load_state_dict(fix_model_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'extractor', 'iteration_{}.pth'.format(args.resume_iter)))))
-        model.detector.load_state_dict(fix_model_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'detector', 'iteration_{}.pth'.format(args.resume_iter)))))
+        model.load_state_dict(fix_model_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'model', 'iteration_{}.pth'.format(args.resume_iter)))))
         optimizer.load_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'optimizer', 'iteration_{}.pth'.format(args.resume_iter))))
-        if cfg.SOLVER.DIS_TRAIN_RATIO != 0:
-            model.discriminator.load_state_dict(fix_model_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'discriminator', 'iteration_{}.pth'.format(args.resume_iter)))))
-            d_optimizer.load_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'd_optimizer', 'iteration_{}.pth'.format(args.resume_iter))))
-
+        # scaler.load_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'scaler', 'iteration_{}'.format(args.resume_iter))))
 
     if cfg.SOLVER.SYNC_BATCHNORM:
-        model = convert_model(model).to(device)
+        model = convert_model(model).to('cuda')
+    
+    model = torch.nn.DataParallel(model, device_ids=list(range(args.num_gpus)))
 
-    if args.mixed_precision:
-        [model.model, model.discriminator], [optimizer, d_optimizer] = apex.amp.initialize(
-            [model.model, model.discriminator], [optimizer, d_optimizer], opt_level='O1')
-
-    if args.num_gpus > 1:
-        model = torch.nn.DataParallel(model, device_ids=list(range(args.num_gpus)))
-
-    # if args.tensorboard and not cfg.DEBUG:
     if not args.debug:
         summary_writer = SummaryWriter(log_dir=cfg.OUTPUT_DIR)
     else:
         summary_writer = None
 
+    if cfg.MIXED_PRECISION:
+        do_pretrain_for_mp(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, data_loader, summary_writer)
 
-    do_train(args, cfg, model, optimizer, d_optimizer, train_loader, device, summary_writer)
+    do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, scaler, data_loader, summary_writer)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Scale and Degradetion Specific Object Detection')
-    parser.add_argument('--config_file', type=str, default='', metavar='FILE', help='path to config file')
-    parser.add_argument('--output_dirname', type=str, default='', help='')
-    parser.add_argument('--num_workers', type=int, default=16, help='')
-    parser.add_argument('--log_step', type=int, default=50, help='')
-    parser.add_argument('--save_step', type=int, default=10000)
-    parser.add_argument('--eval_step', type=int, default=9999999)
-    parser.add_argument('--num_gpus', type=int, default=1)
-    parser.add_argument('--mixed_precision', type=str2bool, default=False)
-    # parser.add_argument('--tensorboard', type=str2bool, default=False)
-    parser.add_argument('--scratch', type=str2bool, default=False)
-    parser.add_argument('--resume_iter', type=int, default=0)
-    parser.add_argument('--pretrained_extractor', type=str, default='')
-    parser.add_argument('--pretrained_detector', type=str, default='')
-    parser.add_argument('--debug', action='store_true')
-    args = parser.parse_args()
+    args = parse_args()
     
-    torch.manual_seed(cfg.SEED)
-    random.seed(cfg.SEED)
-    np.random.seed(cfg.SEED)
-
-    cuda = torch.cuda.is_available()
-    if cuda:
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = True
-        torch.cuda.manual_seed(cfg.SEED)
-
     if len(args.config_file) > 0:
         print('Configration file is loaded from {}'.format(args.config_file))
         cfg.merge_from_file(args.config_file)
     
     if len(args.output_dirname) == 0:
         dt_now = datetime.datetime.now()
-        output_dirname = str(dt_now.date()) + '_' + str(dt_now.time())
+        output_dirname = os.path.join('output', str(dt_now.date()) + '_' + str(dt_now.time()))
     else:
         output_dirname = args.output_dirname
-    cfg.OUTPUT_DIR = os.path.join(cfg.OUTPUT_DIR, output_dirname)
+    cfg.OUTPUT_DIR = output_dirname
     cfg.freeze()
 
-    print('Running with config:\n{}'.format(cfg))
-    if not args.debug and args.resume_iter == 0:
-        if os.path.exists(cfg.OUTPUT_DIR):
-            print('WARNING: OUTPUT_DIR already exists.')
-            sleep(5)
+    assert torch.cuda.is_available(), 'GPU not found'
+
+    np.random.seed(cfg.SEED)
+    torch.manual_seed(cfg.SEED)
+    torch.cuda.manual_seed(cfg.SEED)
+
+    torch.backends.cudnn.benchmark = True
+    # torch.backends.cudnn.deterministic = True
+    
+    if not args.debug:
         os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
-        shutil.copy2(args.config_file, os.path.join(cfg.OUTPUT_DIR, 'config.yaml'))
+        if not len(args.config_file) == 0:
+            shutil.copy2(args.config_file, os.path.join(cfg.OUTPUT_DIR, 'config.yaml'))
 
     train(args, cfg)
-    
+
 
 if __name__ == '__main__':
     main()

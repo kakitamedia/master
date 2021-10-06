@@ -10,26 +10,26 @@ class Compose:
     def __init__(self, transforms):
         self.transforms = transforms
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         for t in self.transforms:
             image, boxes, labels = t(image, boxes, labels)
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class ToTensor:
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         return torch.from_numpy(image).permute(2, 0, 1), boxes, labels
 
 class ToNumpy:
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         return image.numpy().transpose((1, 2, 0)), boxes, labels
 
 class ConvertFromInts:
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         return image.astype(np.float32), boxes, labels
 
 class ConvertToInts:
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         return image.astype(np.uint8), boxes, labels
 
 class Normalize:
@@ -37,24 +37,24 @@ class Normalize:
         self.mean = mean
         self.std = std
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         image /= 255
         image -= self.mean
         image /= self.std
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class Denormalize:
     def __init__(self, mean, std):
         self.mean = mean
         self.std = std
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         image *= self.std
         image += self.mean
         image *= 255
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class Resize:
     def __init__(self, size=(512, 512), interp_method=cv2.INTER_CUBIC):
@@ -64,17 +64,17 @@ class Resize:
             self.size = size
         self.interp_method = interp_method
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         image = cv2.resize(image, self.size, interpolation=self.interp_method)
         
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class RandomResize:
     def __init__(self, resize_range=(0.6, 1.4)):
         self.interp_methods = [cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
         self.resize_range = resize_range
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         interp_method = self.interp_methods[np.random.randint(0, len(self.interp_methods))]
 
         fx, fy = np.random.uniform(self.resize_range[0], self.resize_range[1]), np.random.uniform(self.resize_range[0], self.resize_range[1])
@@ -86,10 +86,10 @@ class RandomResize:
             boxes[:, 1::2] = boxes[:, 1::2] * fy
             boxes[:, 0::2] = boxes[:, 0::2] * fx
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class RandomMirror:
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         _, width, _ = image.shape
         if np.random.randint(2):
             image = image[:, ::-1]
@@ -97,7 +97,7 @@ class RandomMirror:
                 boxes = boxes.copy()
                 boxes[:, 0::2] = width - boxes[:, 2::-2]
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class RandomCrop:
     def __init__(self, size=(512, 512), box_threshold=0.3, max_crops=50):
@@ -110,7 +110,7 @@ class RandomCrop:
         self.max_crops = max_crops
 
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         height, width, _ = image.shape
 
         # When the image is smaller than the crop size, the image is padded by 0
@@ -143,30 +143,29 @@ class RandomCrop:
                 cropped_box_sizes = boxes[:, 2:] - boxes[:, :2]
 
                 # Remove invalid boxes
-                mask1 = cropped_box_sizes > 0
-                mask1 = mask1.all(1)
+                valid = cropped_box_sizes > 0
+                valid = valid.all(1)
 
-                mask2 = cropped_box_sizes/original_box_sizes >= self.box_threshold
-                mask2 = mask2.all(1)
+                mask = cropped_box_sizes/original_box_sizes >= self.box_threshold
+                mask = mask.all(1)
 
-                mask = np.logical_and(mask1, mask2)
-
-                boxes = boxes[mask]
-                labels = labels[mask]
+                boxes = boxes[valid]
+                labels = labels[valid]
+                mask = mask[valid]
 
                 # There are no objects in cropped image, try cropping again up to 'max_crops' times. 
                 if boxes.shape[0] > 0:
                     break
 
-        return image, boxes, labels
-
+        return image, boxes, labels, mask
+       
 
 class ConvertColor:
     def __init__(self, current, transform):
         self.current = current
         self.transform = transform
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         if self.current == 'BGR' and self.transform == 'HSV':
             image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         elif self.current == 'RGB' and self.transform == 'HSV':
@@ -180,7 +179,7 @@ class ConvertColor:
         else:
             raise NotImplementedError
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class RandomContrast:
     def __init__(self, lower=0.8, upper=1.2):
@@ -189,11 +188,11 @@ class RandomContrast:
         self.lower = lower
         self.upper = upper
         
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         alpha = np.random.uniform(self.lower, self.upper)
         image *= alpha
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class RandomBrightness:
     def __init__(self, delta=32.):
@@ -201,11 +200,11 @@ class RandomBrightness:
         assert delta <= 255.
         self.delta = delta
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         delta = np.random.uniform(-self.delta, self.delta)
         image += delta
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class RandomSaturation:
     def __init__(self, lower=0.8, upper=1.2):
@@ -214,32 +213,32 @@ class RandomSaturation:
         self.lower = lower
         self.upper = upper
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         image[:, :, 1] *= np.random.uniform(self.lower, self.upper)
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class RandomHue:
     def __init__(self, delta=18.):
         assert delta >= 0. and delta <= 360.
         self.delta = delta
     
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         image[:, :, 0] += np.random.uniform(-self.delta, self.delta)
         image[:, :, 0][image[:, :, 0] > 360.] -= 360.
         image[:, :, 0][image[:, :, 0] < 0.] += 360.
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class RandomChannelSwap:
     def __init__(self):
         self.perms = ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0))
     
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         swap = self.perms[np.random.randint(len(self.perms))]
         image = image[:, :, swap]
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class PhotometricDistort:
     def __init__(self):
@@ -254,7 +253,7 @@ class PhotometricDistort:
         self.rand_brightness = RandomBrightness()
         self.rand_channel_swap = RandomChannelSwap()
 
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         if np.random.randint(2):
             distort = Compose(self.pd[:-1])
         else:
@@ -264,17 +263,17 @@ class PhotometricDistort:
         image, boxes, labels = distort(image, boxes, labels)
         image, boxes, labels = self.rand_channel_swap(image, boxes, labels)
         
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class Clip:
     def __init__(self, min=0., max=255.):
         self.min = min
         self.max = max
     
-    def __call__(self, image, boxes=None, labels=None):
+    def __call__(self, image, boxes=None, labels=None, mask=None):
         image = np.clip(image, self.min, self.max)
 
-        return image, boxes, labels
+        return image, boxes, labels, mask
 
 class MakeHeatmap:
     def __init__(self, num_classes, max_objects, down_ratio):
