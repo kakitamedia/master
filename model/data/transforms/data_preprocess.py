@@ -4,11 +4,11 @@ import torch
 from .transforms import *
 
 class TrainTransform:
-    def __init__(self, cfg, down_ratio):
+    def __init__(self, cfg, down_ratio, box_threshold):
         self.augment = Compose([
             ConvertFromInts(),
             RandomResize(resize_range=cfg.SOLVER.DATA.RESIZE_RANGE),
-            RandomCrop(size=[int(x*down_ratio) for x in cfg.SOLVER.DATA.HEATMAP_SIZE], box_threshold=cfg.SOLVER.DATA.BOX_THRESHOLD),
+            RandomCrop(size=[int(x*down_ratio) for x in cfg.SOLVER.DATA.HEATMAP_SIZE], box_threshold=box_threshold),
             RandomMirror(),
             PhotometricDistort(),
             Clip(),
