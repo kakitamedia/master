@@ -1,11 +1,11 @@
 from torch.utils.data import ConcatDataset
 
-from model.config.path_catlog import DatasetCatalog
-from .voc_dataset import VOCDataset
+from model.config.path_catalog import DatasetCatalog
+# from .voc_dataset import VOCDataset
 from .coco_dataset import COCODataset
 
 _DATASETS = {
-    'VOCDataset': VOCDataset,
+    # 'VOCDataset': VOCDataset,
     'COCODataset': COCODataset,
 }
 
@@ -20,10 +20,11 @@ def build_dataset(dataset_list, transform=None, target_transform=None, is_test=F
         args['transform'] = transform
         args['target_transform'] = target_transform
         args['pretrain'] = pretrain
-        if factory == VOCDataset:
-            args['keep_difficult'] = is_test
-        elif factory == COCODataset:
+        if factory == COCODataset:
             args['remove_empty'] = not is_test
+        elif factory == VOCDataset:
+            args['keep_difficult'] = is_test
+        
         dataset = factory(**args)
         datasets.append(dataset)
     # for testing, return a list of datasets
@@ -35,3 +36,4 @@ def build_dataset(dataset_list, transform=None, target_transform=None, is_test=F
         dataset = datasets[0]
 
     return dataset
+

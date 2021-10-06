@@ -1,139 +1,190 @@
 import time
-import datetime
 import os
+from tqdm import tqdm
+import datetime
 
 import torch
-import torch.nn as nn
+
+from model.utils.postprocess import _transpose_and_gather_feat
 
 
-def do_train(args, cfg, model, optimizer, d_optimizer, train_loader, device, summary_writer):
-    max_iter = len(train_loader) - args.resume_iter
+def do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, scaler, data_loader, summary_writer):
+    max_iter = len(data_loader['train']) + args.resume_iter
     trained_time = 0
     tic = time.time()
     end = time.time()
 
-    adv_weight = [cfg.SOLVER.ADV_LOSS_INIT_WEIGHT] * len(cfg.MODEL.DOWN_RATIOS)
+    logging_losses = {}
 
-    pid_adv = [0] * len(cfg.MODEL.DOWN_RATIOS)
-    pid_d = [0] * len(cfg.MODEL.DOWN_RATIOS)
-
-    logging_det_loss = [0] * len(cfg.MODEL.DOWN_RATIOS)
-    logging_adv_loss = [0] * len(cfg.MODEL.DOWN_RATIOS)
-    logging_d_loss = [0] * len(cfg.MODEL.DOWN_RATIOS)
-
-    print('Training Starts')
+    print('Training Starts!!!')
     model.train()
-    for iteration, (images, targets) in enumerate(train_loader, args.resume_iter+1):
-        ### Discriminator Training
-        for _ in range(cfg.SOLVER.DIS_TRAIN_RATIO):
-            if iteration <= cfg.SOLVER.INIT_GEN_TRAIN:
-                break
-            d_optimizer.zero_grad()
-            # for i in cfg.MODEL.VALID_SCALE:
-            #     d_loss = model(images[i], i)
-            #     d_loss = d_loss.mean()
-            #     logging_d_loss[i] += d_loss.item() / cfg.SOLVER.DIS_TRAIN_RATIO
+    for iteration, (images, targets) in enumerate(data_loader['train'], args.resume_iter+1):
+        # temp = _transpose_and_gather_feat(targets[0]['temp'], targets[0]['ind'])
+        # print(temp)
+        det_loss, dis_loss, loss_dict = model(images, targets)
+    
+        det_loss = det_loss.mean()
+        dis_loss = dis_loss.mean()
 
-            #     pid_d[i] = d_loss.item()
+        loss_dict = {k:v.mean().item() for k, v in loss_dict.items()}
 
-            #     d_loss.backward()
-
-            d_loss = model(images, 0)
-            d_loss = d_loss.mean()
-            logging_d_loss[0] = d_loss.item()
-
-            d_loss.backward()
-
-            d_optimizer.step()
-
-        ### Detector Training
-        for _ in range(cfg.SOLVER.GEN_TRAIN_RATIO):
-            if cfg.SOLVER.INIT_GEN_TRAIN < iteration <= cfg.SOLVER.INIT_DIS_TRAIN + cfg.SOLVER.INIT_GEN_TRAIN:
-                break
+        detector_train_flag = not (iteration > cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER and iteration <= cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER + cfg.SOLVER.DISCRIMINATOR.INIT_TRAIN_ITER)
+        discriminator_train_flag = iteration > cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER
+        
+        ### Detector update
+        if detector_train_flag:
             optimizer.zero_grad()
-            for i in cfg.MODEL.VALID_SCALE:
-                det_loss, adv_loss = model(images[i], i, target=targets[i])
-                det_loss, adv_loss = det_loss.mean(), adv_loss.mean()
+            scaler.scale(det_loss).backward(retain_graph = discriminator_train_flag)
+            if cfg.SOLVER.DETECTOR.GRADIENT_CLIP > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(filter(lambda p:p.requires_grad, model.parameters()), cfg.SOLVER.DETECTOR.GRADIENT_CLIP)
+            scaler.step(optimizer)
+            # optimizer.step()
+        scheduler.step()
 
-                logging_det_loss[i] += det_loss.item() / cfg.SOLVER.GEN_TRAIN_RATIO
-                logging_adv_loss[i] += adv_loss.item() / cfg.SOLVER.GEN_TRAIN_RATIO
+        ### Discriminator update
+        if discriminator_train_flag:
+            d_optimizer.zero_grad()
+            scaler.scale(dis_loss).backward()
+            if cfg.SOLVER.DISCRIMINATOR.GRADIENT_CLIP > 0:
+                scaler.unscale_(d_optimizer)
+                torch.nn.uitls.clip_grad_norm_(filter(lambda p:p.requires_grad, model.parameters()), cfg.SOLVER.DISCRIMINATOR.GRADIENT_CLIP)
+            scaler.step(d_optimizer)
+            # d_optimizer.step()
+        d_scheduler.step()
 
-                pid_adv[i] = adv_loss.item()
+        scaler.update()
 
-                if iteration <= cfg.SOLVER.INIT_DIS_TRAIN + cfg.SOLVER.INIT_GEN_TRAIN:
-                    loss = det_loss
-                else:
-                    loss = det_loss + adv_weight[i] * adv_loss
-                loss.backward()
-
-            optimizer.step()
-
-        ### update adv_weight
-        for i in cfg.MODEL.VALID_SCALE:
-            if iteration <= cfg.SOLVER.INIT_DIS_TRAIN:
-                break
-            adv_weight[i] += cfg.SOLVER.ADV_LOSS_GAIN * (pid_adv[i] - pid_d[i])
-            if adv_weight[i] < 0:
-                adv_weight[i] = 0
+        for k in loss_dict.keys():
+            if k in logging_losses:
+                logging_losses[k] += loss_dict[k]
+            else:
+                logging_losses[k] = loss_dict[k]
 
         trained_time += time.time() - end
         end = time.time()
 
+        ### Logging
         if iteration % args.log_step == 0:
-            for i in range(len(logging_det_loss)):
-                logging_det_loss[i] /= args.log_step
-                logging_adv_loss[i] /= args.log_step
-                logging_d_loss[i] /= args.log_step
+            logging_losses = {k: v / args.log_step for k, v in logging_losses.items()}
             eta_seconds = int((trained_time / iteration) * (max_iter - iteration))
-            print('===> Iter: {:07d}, LR: {:.5f}, Cost: {:.2f}s, Eta: {}, Loss: {:.6f}, D_Loss: {:.6f}, adv_weight: {:.6f}'.format(iteration, optimizer.param_groups[0]['lr'], time.time() - tic, str(datetime.timedelta(seconds=eta_seconds)), sum(logging_det_loss)/len(cfg.MODEL.VALID_SCALE), sum(logging_d_loss)/len(cfg.MODEL.VALID_SCALE), sum(adv_weight)/len(cfg.MODEL.VALID_SCALE)))
+            print('===> Iter: {:07d}, LR: {:.06f}, Cost: {:.02f}s, Eta: {}, Detector Loss: {:.6f}, Discriminator Loss: {:.6f}'.format(iteration, optimizer.param_groups[0]['lr'], time.time() - tic, str(datetime.timedelta(seconds=eta_seconds)), logging_losses['total_loss'], logging_losses['total_adv_loss']))
 
-            if summary_writer:
-                for i in range(len(cfg.MODEL.DOWN_RATIOS)):
-                    summary_writer.add_scalar('train/detector/loss_{}'.format(i), logging_det_loss[i], global_step=iteration)
-                    summary_writer.add_scalar('train/detector_adv_loss_{}'.format(i), logging_adv_loss[i], global_step=iteration)
-                    summary_writer.add_scalar('train/discriminator/d_loss_{}'.format(i), logging_d_loss[i], global_step=iteration)
-                    summary_writer.add_scalar('train/adv_weight_{}'.format(i), adv_weight[i], global_step=iteration)
-                summary_writer.add_scalar('train/lr', optimizer.param_groups[0]['lr'], global_step=iteration)
+            if summary_writer is not None:
+                for k in logging_losses.keys():
+                    summary_writer.add_scalar('train/{}'.format(k), logging_losses[k], global_step=iteration)
+                summary_writer.add_scalar('train/detector_lr', optimizer.param_groups[0]['lr'], global_step=iteration)
+                summary_writer.add_scalar('train/discriminator_lr', d_optimizer.param_groups[0]['lr'], global_step=iteration)
 
-            logging_det_loss = [0] * len(cfg.MODEL.DOWN_RATIOS)
-            logging_adv_loss = [0] * len(cfg.MODEL.DOWN_RATIOS)
-            logging_d_loss = [0] * len(cfg.MODEL.DOWN_RATIOS)
+            logging_losses = {}
+
             tic = time.time()
 
+        ### Save snapshot
         if iteration % args.save_step == 0 and not args.debug:
-            extractor_path = os.path.join(cfg.OUTPUT_DIR, 'extractor', 'iteration_{}.pth'.format(iteration))
-            detector_path = os.path.join(cfg.OUTPUT_DIR, 'detector', 'iteration_{}.pth'.format(iteration))
+            model_path = os.path.join(cfg.OUTPUT_DIR, 'model', 'iteration_{}.pth'.format(iteration))
             optimizer_path = os.path.join(cfg.OUTPUT_DIR, 'optimizer', 'iteration_{}.pth'.format(iteration))
-            d_model_path = os.path.join(cfg.OUTPUT_DIR, 'discriminator', 'iteration_{}.pth'.format(iteration))
-            d_optimizer_path = os.path.join(cfg.OUTPUT_DIR, 'd_optimizer', 'iteration_{}.pth'.format(iteration))
+            scaler_path = os.path.join(cfg.OUTPUT_DIR, 'scaler', 'iteration_{}.pth'.format(iteration))
 
-            os.makedirs(os.path.dirname(extractor_path), exist_ok=True)
-            os.makedirs(os.path.dirname(detector_path), exist_ok=True)
+            os.makedirs(os.path.dirname(model_path), exist_ok=True)
             os.makedirs(os.path.dirname(optimizer_path), exist_ok=True)
-            if cfg.SOLVER.DIS_TRAIN_RATIO > 0:
-                os.makedirs(os.path.dirname(d_model_path), exist_ok=True)
-                os.makedirs(os.path.dirname(d_optimizer_path), exist_ok=True)
+            os.makedirs(os.path.dirname(scaler_path), exist_ok=True)
 
-            if args.num_gpus > 1:
-                torch.save(model.module.extractors.state_dict(), extractor_path)
-                torch.save(model.module.detector.state_dict(), detector_path)
-                if cfg.SOLVER.DIS_TRAIN_RATIO > 0:
-                    torch.save(model.module.discriminator.state_dict(), d_model_path)
-            else:
-                torch.save(model.extractor.state_dict(), extractor_path)
-                torch.save(model.detector.state_dict(), detector_path)
-                if cfg.SOLVER.DIS_TRAIN_RATIO > 0:
-                    torch.save(model.discriminator.state_dict(), d_model_path)
-
+            torch.save(model.module.state_dict(), model_path)
             torch.save(optimizer.state_dict(), optimizer_path)
-            if cfg.SOLVER.DIS_TRAIN_RATIO > 0:
-                torch.save(d_optimizer.state_dict(), d_optimizer_path)
+            torch.save(scaler.state_dict(), scaler_path)
 
-            print('===== Save Checkpoint to {}'.format(detector_path))
+            print('=====> Save Checkpoint to {}'.format(model_path))
+
+        ### Validation
+        if 'val' in data_loader.keys() and iteration % args.eval_step == 0:
+            print('Validating...')
+            model.eval()
+            val_loss = 0
+            for _ in tqdm(data_loader['val']):
+                with torch.inference_mode():
+                    loss = model()
+                val_loss += loss.item()
+
+            val_loss /= len(data_loader['val'])
+
+            validation_time = time.time() - end
+            trained_time += validation_time
+            end = time.time()
+            tic = time.time()
+            print('======> Cost: {:2f}s, Loss: {:.06f}'.format(validation_time, val_loss))
+
+            if summary_writer:
+                summary_writer.add_scalar('val/loss', val_loss, global_step=iteration)
+
+            model.train()
 
 
-        if iteration % cfg.SOLVER.LR_DACAY == 0:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] /= 10.0
-            for param_group in d_optimizer.param_groups:
-                param_group['lr'] /= 10.0
+def do_pretrain_for_mp(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, data_loader, summary_writer):
+    max_iter = len(data_loader['train']) + args.resume_iter
+    trained_time = 0
+    tic = time.time()
+    end = time.time()
+
+    logging_losses = {}
+
+    print('Pretraining Starts!!!')
+    model.train()
+    for iteration, (images, targets) in enumerate(data_loader['train'], args.resume_iter+1):
+        if iteration > 5000:
+            print('Pretraining is completed.')
+            break
+        det_loss, dis_loss, loss_dict = model(images, targets, pretrain=True)
+    
+        det_loss = det_loss.mean()
+        dis_loss = dis_loss.mean()
+
+        loss_dict = {k:v.mean().item() for k, v in loss_dict.items()}
+
+        detector_train_flag = not (iteration > 5000 and iteration <= 5000)
+        discriminator_train_flag = iteration > 5000
+
+        # print(detector_train_flag)
+        
+        ### Detector update
+        if detector_train_flag:
+            optimizer.zero_grad()
+            det_loss.backward(retain_graph = discriminator_train_flag)
+            if cfg.SOLVER.DETECTOR.GRADIENT_CLIP > 0:
+                torch.nn.utils.clip_grad_norm_(filter(lambda p:p.requires_grad, model.parameters()), cfg.SOLVER.DETECTOR.GRADIENT_CLIP)
+            optimizer.step()
+        scheduler.step()
+
+        ### Discriminator update
+        if discriminator_train_flag:
+            d_optimizer.zero_grad()
+            dis_loss.backward()
+            if cfg.SOLVER.DISCRIMINATOR.GRADIENT_CLIP > 0:
+                torch.nn.uitls.clip_grad_norm_(filter(lambda p:p.requires_grad, model.parameters()), cfg.SOLVER.DISCRIMINATOR.GRADIENT_CLIP)
+            d_optimizer.step()
+        d_scheduler.step()
+
+        for k in loss_dict.keys():
+            if k in logging_losses:
+                logging_losses[k] += loss_dict[k]
+            else:
+                logging_losses[k] = loss_dict[k]
+
+        trained_time += time.time() - end
+        end = time.time()
+
+        ### Logging
+        if iteration % args.log_step == 0:
+            logging_losses = {k: v / args.log_step for k, v in logging_losses.items()}
+            eta_seconds = int((trained_time / iteration) * (10000 - iteration))
+            print('===> Iter: {:07d}, LR: {:.06f}, Cost: {:.02f}s, Eta: {}, Detector Loss: {:.6f}, Discriminator Loss: {:.6f}'.format(iteration, optimizer.param_groups[0]['lr'], time.time() - tic, str(datetime.timedelta(seconds=eta_seconds)), logging_losses['total_loss'], logging_losses['total_adv_loss']))
+
+            # if summary_writer is not None:
+            #     for k in logging_losses.keys():
+            #         summary_writer.add_scalar('train/{}'.format(k), logging_losses[k], global_step=iteration)
+            #     summary_writer.add_scalar('train/detector_lr', optimizer.param_groups[0]['lr'], global_step=iteration)
+            #     summary_writer.add_scalar('train/discriminator_lr', d_optimizer.param_groups[0]['lr'], global_step=iteration)
+
+            logging_losses = {}
+
+            tic = time.time()
