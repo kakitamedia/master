@@ -107,15 +107,15 @@ def save_heatmap(image, heatmap, ind, id, i):
     heatmap = cv2.resize(heatmap, dsize=image.shape[:2])
     # print(heatmap.shape, image.shape)
 
-    overlay = cv2.addWeighted(image, 0.7, heatmap, 0.3, 0)
+    overlay = cv2.addWeighted(image, 0.3, heatmap, 0.7, 0)
 
-    ind = ind.numpy()
-    height, width, _ = image.shape
-    for i in range(ind.shape[0]):
-        if ind[i] == 0:
-            break
-        x, y = divmod(ind[i], 128)
-        overlay = cv2.circle(overlay,(x, y), 3, (255,255,255), -1)
+    # ind = ind.numpy()
+    # height, width, _ = image.shape
+    # for i in range(ind.shape[0]):
+    #     if ind[i] == 0:
+    #         break
+    #     x, y = divmod(ind[i], 128)
+    #     overlay = cv2.circle(overlay,(x, y), 3, (255,255,255), -1)
 
     cv2.imwrite('temp/{}_{}.png'.format(id, i), overlay)
 
