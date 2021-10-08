@@ -68,11 +68,11 @@ def train(args, cfg):
 
         data_loader['val'] = val_loader
 
-    # optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, list(model.extractors.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
-    optimizer = RAdam(filter(lambda p:p.requires_grad, list(model.extractors.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
+    optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, list(model.extractors.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
+    # optimizer = RAdam(filter(lambda p:p.requires_grad, list(model.extractors.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
     scheduler = MultiStepLR(optimizer, cfg.SOLVER.LR_DECAY)
-    # d_optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
-    d_optimizer = RAdam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
+    d_optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
+    # d_optimizer = RAdam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
     d_scheduler = MultiStepLR(d_optimizer, cfg.SOLVER.LR_DECAY)
 
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.MIXED_PRECISION)
@@ -81,7 +81,7 @@ def train(args, cfg):
         print('Resume from {}'.format(os.path.join(cfg.OUTPUT_DIR, 'model', 'iteration_{}.pth'.format(args.resume_iter))))
         model.load_state_dict(fix_model_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'model', 'iteration_{}.pth'.format(args.resume_iter)))))
         optimizer.load_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'optimizer', 'iteration_{}.pth'.format(args.resume_iter))))
-        # scaler.load_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'scaler', 'iteration_{}'.format(args.resume_iter))))
+        scaler.load_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'scaler', 'iteration_{}.pth'.format(args.resume_iter))))
 
     if cfg.SOLVER.SYNC_BATCHNORM:
         model = convert_model(model).to('cuda')

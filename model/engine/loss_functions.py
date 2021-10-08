@@ -28,6 +28,10 @@ class DetectorLoss(nn.Module):
         for i in self.valid_scale:
             pred, adv_pred, target = predictions[i], adv_predictions[i], targets[i]
             for j in range(len(pred)):
+                # print(pred[j]['hm'].min(), pred[j]['hm'].max())
+                # print(pred[j]['wh'].min(), pred[j]['wh'].max())
+                # print(pred[j]['reg'].min(), pred[j]['reg'].max())
+                # print()
                 hm_loss, scaling = self.hm_loss_fn(pred[j]['hm'], target['hm'])
                 wh_loss = self.wh_loss_fn(pred[j]['wh'], target['reg_mask'], target['ind'], target['wh'])
                 reg_loss = self.reg_loss_fn(pred[j]['reg'], target['reg_mask'], target['ind'], target['reg'])
@@ -78,8 +82,11 @@ class DiscriminatorLoss(nn.Module):
 
 class FocalLoss(nn.Module):
     '''nn.Module warpper for focal loss'''
-    def __init__(self):
+    def __init__(self, alpha=2, beta=4):
         super(FocalLoss, self).__init__()
+
+        self.alpha = alpha
+        self.beta = beta
 
     def forward(self, pred, gt):
         ''' Modified focal loss. Exactly the same as CornerNet.
@@ -92,10 +99,10 @@ class FocalLoss(nn.Module):
         pos_inds = gt.eq(1).float()
         neg_inds = gt.lt(1).float()
 
-        neg_weights = torch.pow(1 - gt, 4)
+        neg_weights = torch.pow(1 - gt, self.beta)
 
-        pos_loss = torch.log(pred) * torch.pow(1 - pred, 2) * pos_inds
-        neg_loss = torch.log(1 - pred) * torch.pow(pred, 2) * neg_weights * neg_inds
+        pos_loss = torch.log(pred) * torch.pow(1 - pred, self.alpha) * pos_inds
+        neg_loss = torch.log(1 - pred) * torch.pow(pred, self.alpha) * neg_weights * neg_inds
 
         loss_per_region = -(pos_loss + neg_loss).detach().mean(1)
 
