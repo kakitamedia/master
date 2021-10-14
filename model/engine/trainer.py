@@ -7,6 +7,8 @@ import torch
 
 from model.utils.postprocess import _transpose_and_gather_feat
 
+from torch import linalg as LA
+
 
 def do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, scaler, data_loader, summary_writer):
     max_iter = len(data_loader['train']) + args.resume_iter
@@ -19,8 +21,6 @@ def do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, s
     print('Training Starts!!!')
     model.train()
     for iteration, (images, targets) in enumerate(data_loader['train'], args.resume_iter+1):
-        # temp = _transpose_and_gather_feat(targets[0]['temp'], targets[0]['ind'])
-        # print(temp)
         det_loss, dis_loss, loss_dict = model(images, targets)
     
         det_loss = det_loss.mean()
@@ -31,26 +31,33 @@ def do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, s
         detector_train_flag = not (iteration > cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER and iteration <= cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER + cfg.SOLVER.DISCRIMINATOR.INIT_TRAIN_ITER)
         discriminator_train_flag = iteration > cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER
         
-        ### Detector update
+        detector_params = list(model.module.extractors.parameters()) + list(model.module.detector.parameters())
+        discriminator_params = list(model.module.discriminator.parameters())
+
+        ### Detector gradient calculation
         if detector_train_flag:
             optimizer.zero_grad()
-            scaler.scale(det_loss).backward(retain_graph = discriminator_train_flag)
+            scaler.scale(det_loss).backward(retain_graph=discriminator_train_flag, inputs=detector_params)
             if cfg.SOLVER.DETECTOR.GRADIENT_CLIP > 0:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(filter(lambda p:p.requires_grad, model.parameters()), cfg.SOLVER.DETECTOR.GRADIENT_CLIP)
-            scaler.step(optimizer)
-            # optimizer.step()
-        scheduler.step()
 
-        ### Discriminator update
+
+        ### Discriminator gradient calculation
         if discriminator_train_flag:
             d_optimizer.zero_grad()
-            scaler.scale(dis_loss).backward()
+            scaler.scale(dis_loss).backward(inputs=discriminator_params)
             if cfg.SOLVER.DISCRIMINATOR.GRADIENT_CLIP > 0:
                 scaler.unscale_(d_optimizer)
                 torch.nn.uitls.clip_grad_norm_(filter(lambda p:p.requires_grad, model.parameters()), cfg.SOLVER.DISCRIMINATOR.GRADIENT_CLIP)
+
+        ### Update
+        if detector_train_flag:
+            scaler.step(optimizer)
+        if discriminator_train_flag:
             scaler.step(d_optimizer)
-            # d_optimizer.step()
+
+        scheduler.step()
         d_scheduler.step()
 
         scaler.update()

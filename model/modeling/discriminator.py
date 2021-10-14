@@ -23,7 +23,7 @@ class ResidualDiscriminator(nn.Module):
 
         num_layers = 5
 
-        self.conv_blocks = [ConvBlock(input_channel, feat, kernel_size=7, stride=1, padding=3, bias=True, activation=activation, normalization=normalization)]
+        self.conv_blocks = [ConvBlock(input_channel, feat, kernel_size=3, stride=1, padding=1, bias=True, activation=activation, normalization=normalization)]
         for _ in range(num_layers):
             self.conv_blocks.append(ResidualBlock(feat, feat, kernel_size=3, stride=1, padding=1, bias=True, activation=activation, normalization=normalization))
         self.conv_blocks.append(ConvBlock(feat, output_channel, kernel_size=3, stride=1, padding=1, activation=None, normalization=None))

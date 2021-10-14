@@ -28,10 +28,6 @@ class DetectorLoss(nn.Module):
         for i in self.valid_scale:
             pred, adv_pred, target = predictions[i], adv_predictions[i], targets[i]
             for j in range(len(pred)):
-                # print(pred[j]['hm'].min(), pred[j]['hm'].max())
-                # print(pred[j]['wh'].min(), pred[j]['wh'].max())
-                # print(pred[j]['reg'].min(), pred[j]['reg'].max())
-                # print()
                 hm_loss, scaling = self.hm_loss_fn(pred[j]['hm'], target['hm'])
                 wh_loss = self.wh_loss_fn(pred[j]['wh'], target['reg_mask'], target['ind'], target['wh'])
                 reg_loss = self.reg_loss_fn(pred[j]['reg'], target['reg_mask'], target['ind'], target['reg'])

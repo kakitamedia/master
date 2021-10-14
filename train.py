@@ -69,10 +69,8 @@ def train(args, cfg):
         data_loader['val'] = val_loader
 
     optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, list(model.extractors.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
-    # optimizer = RAdam(filter(lambda p:p.requires_grad, list(model.extractors.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
     scheduler = MultiStepLR(optimizer, cfg.SOLVER.LR_DECAY)
     d_optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
-    # d_optimizer = RAdam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
     d_scheduler = MultiStepLR(d_optimizer, cfg.SOLVER.LR_DECAY)
 
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.MIXED_PRECISION)
@@ -121,7 +119,9 @@ def main():
     torch.cuda.manual_seed(cfg.SEED)
 
     torch.backends.cudnn.benchmark = True
+    
     # torch.backends.cudnn.deterministic = True
+    # torch.autograd.set_detect_anomaly(True)
     
     if not args.debug:
         os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)

@@ -99,33 +99,24 @@ class ModelWithLoss(nn.Module):
         return penalty / len(list(combinations(self.valid_scale, 2)))
 
 
-    # def _gradient_penalty(self, real_data, generated_data):
-    #     batch_size = real_data.size()[0]
+class Model(nn.Module):
+    def __init__(self, cfg):
+        super(Model, self).__init__()
 
-    #     # Calculate interpolation
-    #     alpha = torch.rand(batch_size, 1, 1, 1)
-    #     alpha = alpha.expand_as(real_data)
-    #     alpha = alpha.to(real_data.device)
-    #     interpolated = alpha * real_data.data + (1 - alpha) * generated_data.data
-    #     interpolated.requires_grad = True
-    #     interpolated = interpolated.to(real_data.device)
+        self.extractors = build_extractors(cfg)
+        self.detector = build_detector(cfg)
 
-    #     # Calculate probability of interpolated examples
-    #     prob_interpolated = self.discriminator(interpolated)
+        self.valid_scale = cfg.MODEL.VALID_SCALE
 
-    #     # Calculate gradients of probabilities with respect to examples
-    #     gradients = autograd.grad(outputs=prob_interpolated, inputs=interpolated,
-    #                            grad_outputs=torch.ones(prob_interpolated.size()).to(real_data.device),
-    #                            create_graph=True, retain_graph=True)[0]
+    def forward(self, images):
+        images = [x.to('cuda', non_blocking=True) for x in images]
 
-    #     # Gradients have shape (batch_size, num_channels, img_width, img_height),
-    #     # so flatten to easily take norm per example in batch
-    #     gradients = gradients.view(batch_size, -1)
-    #     # self.losses['gradient_norm'].append(gradients.norm(2, dim=1).mean().data[0])
+        predictions = [None for _ in range(len(images))]
+        for i in self.valid_scale:
+            print(i)
+            feat = self.extractors[i](images[i])
+            pred = self.detector(feat)
 
-    #     # Derivatives of the gradient close to 0 can cause problems because of
-    #     # the square root, so manually calculate norm and add epsilon
-    #     gradients_norm = torch.sqrt(torch.sum(gradients ** 2, dim=1) + 1e-12)
+            predictions[i] = pred
 
-    #     # Return gradient penalty
-    #     return ((gradients_norm - 1) ** 2).mean()
+        return pred

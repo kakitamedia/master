@@ -20,7 +20,7 @@ class UNetExtractor(nn.Module):
         activation = cfg.MODEL.DETECTOR.ACTIVATION
         normalization = cfg.MODEL.DETECTOR.NORMALIZATION
 
-        self.layers = [ConvBlock(3, feat, kernel_size=7, stride=down_ratio, padding=3, bias=False, activation='relu', normalization=normalization)]
+        self.layers = [ConvBlock(3, feat, kernel_size=7, stride=down_ratio, padding=3, bias=False, activation=activation, normalization=normalization)]
         self.layers.append(UNetBlock(feat, activation=activation, normalization=normalization))
         self.layers.append(ConvBlock(feat, feat, kernel_size=3, stride=1, padding=1, bias=False, activation=activation, normalization=normalization))
 
