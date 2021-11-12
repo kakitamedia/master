@@ -27,3 +27,17 @@ class DummyTransform:
 class DummyTargetTransform:
     def __call__(self, image, boxes, labels):
         return {'dummy': torch.zeros(1)}
+
+class EvalTransform:
+    def __init__(self, cfg):
+        self.augment = Compose([
+            ConvertFromInts(),
+            ShapingCrop(),
+            Normalize(cfg.INPUT.MEAN, cfg.INPUT.STD),
+            ToTensor(),
+        ])
+
+    def __call__(self, image, boxes, labels):
+        image, boxes, labels = self.augment(image, boxes, labels)
+        return image, boxes, labels
+    

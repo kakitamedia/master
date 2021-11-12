@@ -8,6 +8,10 @@ def build_extractors(cfg):
     if model_type == 'unet':
         return nn.ModuleList([UNetExtractor(cfg, down_ratio) for down_ratio in cfg.MODEL.DOWN_RATIOS])
 
+    if model_type == None:
+        from torchvision.transforms import Resize
+        return nn.ModuleList([Resize(cfg.SOLVER.DATA.HEATMAP_SIZE, antialias=True) for down_ratio in cfg.MODEL.DOWN_RATIOS])
+
     else:
         raise NotImplementedError('cfg.MODEL.EXTRACTOR.TYPE: {} is not supported'.format(model_type))
 
@@ -23,6 +27,9 @@ class UNetExtractor(nn.Module):
         self.layers = [ConvBlock(3, feat, kernel_size=7, stride=down_ratio, padding=3, bias=False, activation=activation, normalization=normalization)]
         self.layers.append(UNetBlock(feat, activation=activation, normalization=normalization))
         self.layers.append(ConvBlock(feat, feat, kernel_size=3, stride=1, padding=1, bias=False, activation=activation, normalization=normalization))
+
+        if cfg.MODEL.DETECTOR.IMAGE_INPUT:
+            self.layers.append(ConvBlock(feat, 3, kernel_size=1, stride=1, padding=0, bias=True, activation=None, normalization=None))
 
         self.layers = nn.Sequential(*self.layers)
 

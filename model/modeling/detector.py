@@ -30,7 +30,10 @@ class Resnet(nn.Module):
         feat = cfg.MODEL.DETECTOR.INPUT_CHANNEL
         block = resnet_spec[num_layers]
 
-        self.conv_layers = []
+        if cfg.MODEL.DETECTOR.IMAGE_INPUT:
+            self.conv_layers = [ConvBlock(3, feat, kernel_size=7, stride=1, padding=3, activation=self.activation, normalization=self.normalization)]
+        else:
+            self.conv_layers = []
         layer, feat = self._make_conv_layers(block[0], feat, stride=1)
         self.conv_layers.append(layer)
         for i in range(1, 4):

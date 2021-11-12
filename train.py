@@ -11,8 +11,6 @@ from torch.utils.data.sampler import BatchSampler, SequentialSampler
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import MultiStepLR
 
-from torch_optimizer import RAdam
-
 from model.config import cfg
 from model.engine.trainer import do_pretrain_for_mp, do_train
 from model.modeling.build_model import ModelWithLoss
@@ -35,12 +33,15 @@ def parse_args():
     parser.add_argument('--num_gpus', type=int, default=1, help='')
     parser.add_argument('--num_workers', type=int, default=16, help='')
     parser.add_argument('--resume_iter', type=int, default=0, help='')
+    parser.add_argument('--gradient_logging', action='store_true')
 
     return parser.parse_args()
 
 
 def train(args, cfg):
     model = ModelWithLoss(cfg).to('cuda')
+    if cfg.SOLVER.SYNC_BATCHNORM:
+        model = convert_model(model).to('cuda')
     print('------------Model Architecture-------------')
     print(model)
 
@@ -49,9 +50,9 @@ def train(args, cfg):
 
     train_transforms = [TrainTransform(cfg, cfg.MODEL.DOWN_RATIOS[i], cfg.SOLVER.DATA.BOX_THRESHOLD[i]) if i in cfg.MODEL.VALID_SCALE else DummyTransform() for i in range(len(cfg.MODEL.DOWN_RATIOS))]
     # train_transforms = [TrainTransform(cfg, down_ratio) for down_ratio in cfg.MODEL.DOWN_RATIOS]
-    train_target_transforms = [MakeHeatmap(cfg.MODEL.NUM_CLASSES, cfg.SOLVER.DATA.MAX_OBJECTS, cfg.MODEL.DOWN_RATIOS[i]) if i in cfg.MODEL.VALID_SCALE else DummyTargetTransform() for i in range(len(cfg.MODEL.DOWN_RATIOS))]
+    train_target_transforms = [MakeHeatmap(cfg, cfg.MODEL.DOWN_RATIOS[i]) if i in cfg.MODEL.VALID_SCALE else DummyTargetTransform() for i in range(len(cfg.MODEL.DOWN_RATIOS))]
     # train_target_transforms = [MakeHeatmap(cfg.MODEL.NUM_CLASSES, cfg.SOLVER.DATA.MAX_OBJECTS, down_ratio) for down_ratio in cfg.MODEL.DOWN_RATIOS]
-    train_dataset = build_dataset(dataset_list=cfg.DATASET.TRAIN, transform=train_transforms, target_transform=train_target_transforms)
+    train_dataset = build_dataset(cfg, dataset_list=cfg.DATASET.TRAIN, transform=train_transforms, target_transform=train_target_transforms)
     sampler = RandomSampler(train_dataset)
     batch_sampler = BatchSampler(sampler=sampler, batch_size=cfg.SOLVER.BATCH_SIZE, drop_last=True)
     batch_sampler = IterationBasedBatchSampler(batch_sampler, num_iterations=cfg.SOLVER.MAX_ITER)
@@ -80,10 +81,7 @@ def train(args, cfg):
         model.load_state_dict(fix_model_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'model', 'iteration_{}.pth'.format(args.resume_iter)))))
         optimizer.load_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'optimizer', 'iteration_{}.pth'.format(args.resume_iter))))
         scaler.load_state_dict(torch.load(os.path.join(cfg.OUTPUT_DIR, 'scaler', 'iteration_{}.pth'.format(args.resume_iter))))
-
-    if cfg.SOLVER.SYNC_BATCHNORM:
-        model = convert_model(model).to('cuda')
-    
+   
     model = torch.nn.DataParallel(model, device_ids=list(range(args.num_gpus)))
 
     if not args.debug:

@@ -14,20 +14,31 @@ class DetectorLoss(nn.Module):
         self.hm_loss_fn = FocalLoss()
         self.wh_loss_fn = RegL1Loss()
         self.reg_loss_fn = RegL1Loss()
-        self.adv_loss_fn = WassersteinLoss(d_train=False)
+        if cfg.SOLVER.ADV_LOSS_FN == 'wasserstain':
+            self.adv_loss_fn = WassersteinLoss(d_train=False)
+        elif cfg.SOLVER.ADV_LOSS_FN == 'hinge':
+            self.adv_loss_fn = WassersteinLoss(d_train=False)
 
         self.hm_loss_weight = cfg.SOLVER.DETECTOR.HM_LOSS_WEIGHT
         self.wh_loss_weight = cfg.SOLVER.DETECTOR.WH_LOSS_WEIGHT
         self.reg_loss_weight = cfg.SOLVER.DETECTOR.REG_LOSS_WEIGHT
         self.adv_loss_weight = cfg.SOLVER.DETECTOR.ADV_LOSS_WEIGHT
 
+        self.recon_loss = cfg.MODEL.DETECTOR.IMAGE_INPUT
+        self.recon_loss_fn = nn.L1Loss()
+        self.recon_loss_weight = cfg.SOLVER.DETECTOR.RECON_LOSS_WEIGHT
+
         self.valid_scale = cfg.MODEL.VALID_SCALE
 
-    def forward(self, predictions, adv_predictions, targets):
+    def forward(self, features, predictions, adv_predictions, targets):
         loss, loss_dict = 0, {}
         for i in self.valid_scale:
-            pred, adv_pred, target = predictions[i], adv_predictions[i], targets[i]
+            feat, pred, adv_pred, target = features[i], predictions[i], adv_predictions[i], targets[i]
             for j in range(len(pred)):
+                # print('heatmap', pred[j]['hm'].min(), pred[j]['hm'].max())
+                # print('wh', pred[j]['wh'].min(), pred[j]['wh'].max())
+                # print('reg', pred[j]['reg'].min(), pred[j]['reg'].max())
+                # print('feat', feat[j].min(), feat[j].max())
                 hm_loss, scaling = self.hm_loss_fn(pred[j]['hm'], target['hm'])
                 wh_loss = self.wh_loss_fn(pred[j]['wh'], target['reg_mask'], target['ind'], target['wh'])
                 reg_loss = self.reg_loss_fn(pred[j]['reg'], target['reg_mask'], target['ind'], target['reg'])
@@ -37,6 +48,11 @@ class DetectorLoss(nn.Module):
         
             adv_loss = self.adv_loss_fn(adv_pred, i)
             loss += self.adv_loss_weight * adv_loss
+
+            if self.recon_loss:
+                recon_loss = self.recon_loss_fn(feat, target['image'])
+                loss += self.recon_loss_weight * recon_loss
+                loss_dict['recon_loss:{}'.format(i)] = recon_loss.detach()
 
             loss_dict['hm_loss:{}'.format(i)] = hm_loss.detach()
             loss_dict['wh_loss:{}'.format(i)] = wh_loss.detach()
@@ -53,7 +69,10 @@ class DiscriminatorLoss(nn.Module):
     def __init__(self, cfg):
         super(DiscriminatorLoss, self).__init__()
 
-        self.adv_loss_fn = WassersteinLoss(d_train=True)
+        if cfg.SOLVER.ADV_LOSS_FN == 'wasserstain':
+            self.adv_loss_fn = WassersteinLoss(d_train=True)
+        elif cfg.SOLVER.ADV_LOSS_FN == 'hinge':
+            self.adv_loss_fn = HingeLoss(d_train=True)
         self.adv_loss_weight = cfg.SOLVER.DISCRIMINATOR.ADV_LOSS_WEIGHT
 
         self.valid_scale = cfg.MODEL.VALID_SCALE
@@ -135,13 +154,32 @@ class WassersteinLoss(nn.Module):
         self.d_train = d_train
 
     def forward(self, pred, i, scaling=None):
-        if not self.d_train:
-            pred[:, i, :, :] *= -1.
-        else:
-            pred *= -1.
-            pred[:, i, :, :] *= -1.
-
         if scaling is not None:
             pred *= scaling
 
+        if not self.d_train:
+            pred[:, i] *= -1.
+        else:
+            pred *= -1.
+            pred[:, i] *= -1.       
+
         return torch.mean(pred)
+
+
+class HingeLoss(nn.Module):
+    def __init__(self, d_train):
+        super(HingeLoss, self).__init__()
+        self.d_train = d_train
+        self.relu = nn.ReLU()
+
+    def forward(self, pred, i, scaling=None):
+        if scaling is not None:
+            pred *= scaling
+
+        if not self.d_train:
+            pred[:, i] *= -1.
+        else:
+            pred *= -1.
+            pred[:, i] *= -1.
+
+        return torch.mean(self.relu(1. + pred))

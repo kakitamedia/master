@@ -99,6 +99,21 @@ class RandomMirror:
 
         return image, boxes, labels
 
+class ShapingCrop:
+    def __init__(self, down_ratio=16):
+        self.down_ratio = down_ratio
+    
+    def __call__(self, image, boxes=None, labels=None):
+        height, width, _ = image.shape
+
+        bottom = height - height % self.down_ratio
+        right = width - width % self.down_ratio
+
+        image = image[:bottom, :right, :]
+
+        return image, boxes, labels
+
+
 class RandomCrop:
     def __init__(self, size=(512, 512), box_threshold=0.3, max_crops=50):
         self.box_threshold = box_threshold
@@ -277,10 +292,15 @@ class Clip:
         return image, boxes, labels
 
 class MakeHeatmap:
-    def __init__(self, num_classes, max_objects, down_ratio):
-        self.num_classes = num_classes
-        self.max_objects = max_objects
+    def __init__(self, cfg, down_ratio):
+        self.num_classes = cfg.MODEL.NUM_CLASSES
+        self.max_objects = cfg.SOLVER.DATA.MAX_OBJECTS
         self.down_ratio = down_ratio
+        self.image_target = cfg.MODEL.DETECTOR.IMAGE_INPUT
+
+        from torchvision.transforms import Resize
+        self.down_scaling = Resize(cfg.SOLVER.DATA.HEATMAP_SIZE, antialias=True)
+
 
     def _gaussian_radius(self, box_size, min_overlap=0.7):
         height, width = box_size
@@ -340,8 +360,6 @@ class MakeHeatmap:
         ind = np.zeros((self.max_objects), dtype=np.int64)
         reg_mask = np.zeros((self.max_objects), dtype=np.uint8)
 
-        temp = np.zeros((2, height, width), dtype=np.uint8)
-
         for i in range(num_objects):
             box = boxes[i]
             label = labels[i]
@@ -359,8 +377,6 @@ class MakeHeatmap:
             reg[i] = center - center_int
             reg_mask[i] = 1
 
-            temp[:, center_int[0], center_int[1]] = 1
-
 
         ret = {
             'hm': torch.from_numpy(heatmap),
@@ -368,8 +384,10 @@ class MakeHeatmap:
             'reg_mask': torch.from_numpy(reg_mask),
             'ind': torch.from_numpy(ind),
             'wh': torch.from_numpy(wh),
-            'temp': torch.from_numpy(temp)
             }
+        
+        if self.image_target:
+            ret['image'] = self.down_scaling(image)
 
         # print(ret['wh'])
 

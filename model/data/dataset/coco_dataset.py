@@ -5,7 +5,7 @@ from copy import copy
 import cv2
 
 from torch.utils.data import Dataset
-from model.data.transforms.transforms import *
+
 
 
 class COCODataset(Dataset):
@@ -26,7 +26,7 @@ class COCODataset(Dataset):
                    'refrigerator', 'book', 'clock', 'vase', 'scissors',
                    'teddy bear', 'hair drier', 'toothbrush')
 
-    def __init__(self, data_dir, ann_file ,transform=None, target_transform=None, remove_empty=False, pretrain=False):
+    def __init__(self, cfg, data_dir, ann_file ,transform=None, target_transform=None, remove_empty=False, pretrain=False):
         from pycocotools.coco import COCO
         self.coco = COCO(ann_file)
         self.data_dir = data_dir
@@ -42,6 +42,11 @@ class COCODataset(Dataset):
         self.coco_id_to_contiguous_id = {coco_id: i + 1 for i, coco_id in enumerate(coco_categories)}
         self.contiguous_id_to_coco_id = {v: k for k, v in self.coco_id_to_contiguous_id.items()}
 
+        self.contents_match = cfg.SOLVER.CONTENTS_MATCH
+        from torchvision.transforms import Resize
+        self.resize_x2 = Resize((256, 256), antialias=True)
+        self.resize_x4 = Resize((128, 128), antialias=True)
+
     def __getitem__(self, index):
         image_id = self.ids[index]
         boxes, labels = self._get_annotation(image_id)
@@ -54,16 +59,23 @@ class COCODataset(Dataset):
         if self.transform:
             for i in range(len(self.transform)):
                 images[i], boxes[i], labels[i] = self.transform[i](images[i], boxes[i], labels[i])
+                if self.contents_match:
+                    images[1], boxes[1], labels[1] = self.resize_x2(copy(images[i])), copy(boxes[i]/2), copy(labels[i])
+                    images[2], boxes[2], labels[2] = self.resize_x4(copy(images[i])), copy(boxes[i]/4), copy(labels[i])
+                    break
 
-        targets = []
-        for i in range(len(self.target_transform)):
-            targets.append(self.target_transform[i](images[i], boxes[i], labels[i]))
+        if self.target_transform:
+            targets = []
+            for i in range(len(self.target_transform)):
+                targets.append(self.target_transform[i](images[i], boxes[i], labels[i]))
 
-        # save_heatmap(copy(images[0]), copy(targets[0]['hm']), copy(targets[0]['ind']), image_id, 0)
-        # save_heatmap(copy(images[1]), copy(targets[1]['hm']), copy(targets[1]['ind']), image_id, 1)
-        # save_heatmap(copy(images[2]), copy(targets[2]['hm']), copy(targets[2]['ind']), image_id, 2)
+            # save_heatmap(copy(images[0]), copy(targets[0]['hm']), copy(targets[0]['ind']), image_id, 0)
+            # save_heatmap(copy(images[1]), copy(targets[1]['hm']), copy(targets[1]['ind']), image_id, 1)
+            # save_heatmap(copy(images[2]), copy(targets[2]['hm']), copy(targets[2]['ind']), image_id, 2)
 
-        return images, targets
+            return images, targets
+
+        return images
 
     def _read_image(self, image_id):
         file_name = self.coco.loadImgs(image_id)[0]['file_name']
@@ -86,6 +98,11 @@ class COCODataset(Dataset):
 
         return boxes, labels
 
+    def get_annotation(self, index):
+        image_id = self.ids[index]
+        return image_id, self._get_annotation(image_id)
+
+
     def _xywh2xyxy(self, box):
         x1, y1, w, h = box
         return [x1, y1, x1 + w, y1 + h]
@@ -93,6 +110,7 @@ class COCODataset(Dataset):
     def __len__(self):
         return len(self.ids)
 
+from model.data.transforms.transforms import Compose, ToNumpy, Denormalize
 def save_heatmap(image, heatmap, ind, id, i):
     transform = Compose([
         ToNumpy(),

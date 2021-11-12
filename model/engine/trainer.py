@@ -18,6 +18,9 @@ def do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, s
 
     logging_losses = {}
 
+    detector_params = list(filter(lambda p:p.requires_grad, list(model.module.extractors.parameters()) + list(model.module.detector.parameters())))
+    discriminator_params = list(filter(lambda p:p.requires_grad, list(model.module.discriminator.parameters())))
+
     print('Training Starts!!!')
     model.train()
     for iteration, (images, targets) in enumerate(data_loader['train'], args.resume_iter+1):
@@ -29,10 +32,7 @@ def do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, s
         loss_dict = {k:v.mean().item() for k, v in loss_dict.items()}
 
         detector_train_flag = not (iteration > cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER and iteration <= cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER + cfg.SOLVER.DISCRIMINATOR.INIT_TRAIN_ITER)
-        discriminator_train_flag = iteration > cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER
-        
-        detector_params = list(model.module.extractors.parameters()) + list(model.module.detector.parameters())
-        discriminator_params = list(model.module.discriminator.parameters())
+        discriminator_train_flag = iteration > cfg.SOLVER.DETECTOR.INIT_TRAIN_ITER      
 
         ### Detector gradient calculation
         if detector_train_flag:
@@ -41,7 +41,6 @@ def do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, s
             if cfg.SOLVER.DETECTOR.GRADIENT_CLIP > 0:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(filter(lambda p:p.requires_grad, model.parameters()), cfg.SOLVER.DETECTOR.GRADIENT_CLIP)
-
 
         ### Discriminator gradient calculation
         if discriminator_train_flag:
@@ -62,6 +61,10 @@ def do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, s
 
         scaler.update()
 
+        # for param in model.module.extractors[0].parameters():
+        #     print(param.mean())
+        #     break
+
         for k in loss_dict.keys():
             if k in logging_losses:
                 logging_losses[k] += loss_dict[k]
@@ -78,6 +81,23 @@ def do_train(args, cfg, model, optimizer, scheduler, d_optimizer, d_scheduler, s
             print('===> Iter: {:07d}, LR: {:.06f}, Cost: {:.02f}s, Eta: {}, Detector Loss: {:.6f}, Discriminator Loss: {:.6f}'.format(iteration, optimizer.param_groups[0]['lr'], time.time() - tic, str(datetime.timedelta(seconds=eta_seconds)), logging_losses['total_loss'], logging_losses['total_adv_loss']))
 
             if summary_writer is not None:
+                if args.gradient_logging:
+                    extractor_grad, detector_grad, discriminator_grad = 0, 0, 0
+                    for param in model.module.extractors.parameters():
+                        if param.grad is not None:
+                            extractor_grad += LA.norm(param.grad)
+                    for param in model.module.detector.parameters():
+                        if param.grad is not None:
+                            detector_grad += LA.norm(param.grad)
+                    for param in model.module.discriminator.parameters():
+                        if param.grad is not None:
+                            discriminator_grad += LA.norm(param.grad)
+
+                    logging_losses['extractor_grad'] = extractor_grad
+                    logging_losses['detector_grad'] = detector_grad
+                    logging_losses['discriminator_grad'] = discriminator_grad
+
+
                 for k in logging_losses.keys():
                     summary_writer.add_scalar('train/{}'.format(k), logging_losses[k], global_step=iteration)
                 summary_writer.add_scalar('train/detector_lr', optimizer.param_groups[0]['lr'], global_step=iteration)

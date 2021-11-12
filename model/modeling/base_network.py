@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 
@@ -66,6 +68,18 @@ class BlockBase(nn.Module):
 
         return x
 
+class DenseBlock(BlockBase):
+    def __init__(self, input_dim, output_dim, bias=False, activation='relu', normalization='batch'):
+        super().__init__(output_dim, bias, activation, normalization)
+        self.layer = nn.Linear(input_dim, output_dim, bias=bias)
+
+        ### Overwrite normalizing layer for 1D version
+        self.norm = normalization
+        if self.norm =='batch':
+            self.norm = nn.BatchNorm1d(output_dim)
+        elif self.norm == 'instance':
+            self.norm = nn.InstanceNorm1d(output_dim)
+        self.create_block()
 
 class ConvBlock(BlockBase):
     def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=1, dilation=1, groups=1, bias=False, activation='relu', normalization='batch'):
@@ -228,6 +242,8 @@ class ResidualBlock(nn.Module):
         if self.skip_layer is not None:
             self.skip_layer = nn.Sequential(*self.skip_layer)
 
+        self.cutoff = (math.floor(kernel_size/2) - padding) * num_convs
+
     def forward(self, x):
         if self.skip_layer is not None:
             residual = self.skip_layer(x)
@@ -241,7 +257,10 @@ class ResidualBlock(nn.Module):
                 x = self.norms[i](x)
 
             if i == self.num_convs - 1:
-                x = x + residual
+                if self.cutoff == 0:
+                    x = x + residual
+                else:
+                    x = x + residual[:, :, self.cutoff:-self.cutoff, self.cutoff:-self.cutoff]
             
             if self.acts[i] is not None:
                 x = self.acts[i](x)

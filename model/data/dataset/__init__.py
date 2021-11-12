@@ -10,13 +10,14 @@ _DATASETS = {
 }
 
 
-def build_dataset(dataset_list, transform=None, target_transform=None, is_test=False, pretrain=False):
+def build_dataset(cfg, dataset_list, transform=None, target_transform=None, is_test=False, pretrain=False):
     assert len(dataset_list) > 0
     datasets = []
     for dataset_name in dataset_list:
         data = DatasetCatalog.get(dataset_name)
         args = data['args']
         factory = _DATASETS[data['factory']]
+        args['cfg'] = cfg
         args['transform'] = transform
         args['target_transform'] = target_transform
         args['pretrain'] = pretrain
