@@ -17,9 +17,15 @@ def inference(args, cfg, model, eval_loader):
                 for b in range(args.batch_size):
                     for j in range(len(features)):
                         save_path = os.path.join(args.output_dirname, 'visualize', '{}_{}.png'.format(count, j))
+                        visualize_feat(features[j][b], save_path)
+
+            if args.save_feature:
+                for b in range(args.batch_size):
+                    for j in range(len(features)):
+                        save_path = os.path.join(args.output_dirname, 'feature', '{}_{}.npy'.format(count, j))
                         save_feat(features[j][b], save_path)
 
-                    count += 1
+            count += 1
 
             boxes, labels, scores = decode_predictions(predictions, cfg.TEST.MAX_OBJECTS, cfg.MODEL.DOWN_RATIOS, args.batch_size)
 
@@ -31,22 +37,6 @@ def inference(args, cfg, model, eval_loader):
                     results.append([boxes[i].tolist(), labels[i].tolist(), scores[i].tolist()])
 
     return results
-
-
-import cv2
-import numpy as np
-from model.data.transforms.transforms import ToNumpy
-
-def save_feat(feat, save_path):
-    transform = ToNumpy()
-
-    feat, _, _ = transform(feat[0].detach().cpu().unsqueeze(0))
-    feat = (feat - feat.min()) / (feat.max() - feat.min())
-    feat = feat * 255
-    feat = feat.astype(np.uint8)
-
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    cv2.imwrite(save_path, feat)
 
 def coco_evaluation(dataset, predictions, output_dir):
     coco_results = []
@@ -87,3 +77,27 @@ def coco_evaluation(dataset, predictions, output_dir):
     coco_eval.summarize()
 
     return coco_eval
+
+
+import cv2
+import numpy as np
+from model.data.transforms.transforms import ToNumpy
+
+def visualize_feat(feat, save_path):
+    transform = ToNumpy()
+
+    feat, _, _ = transform(feat[0].detach().cpu().unsqueeze(0))
+    feat = (feat - feat.min()) / (feat.max() - feat.min())
+    feat = feat * 255
+    feat = feat.astype(np.uint8)
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    cv2.imwrite(save_path, feat)
+
+def save_feat(feat, save_path):
+    transform = ToNumpy()
+
+    feat, _, _ = transform(feat.detach().cpu())
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    np.save(save_path, feat)

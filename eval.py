@@ -48,6 +48,7 @@ def main():
     parser.add_argument('--num_gpus', type=int, default=1)
     parser.add_argument('--trained_model', type=str, default='weights/multiscale_centernet_pretrain.pth')
     parser.add_argument('--visualize_feature', action='store_true')
+    parser.add_argument('--save_feature', action='store_true')
     args = parser.parse_args()
 
     cuda = torch.cuda.is_available()

@@ -74,10 +74,10 @@ class DenseBlock(BlockBase):
         self.layer = nn.Linear(input_dim, output_dim, bias=bias)
 
         ### Overwrite normalizing layer for 1D version
-        self.norm = normalization
-        if self.norm =='batch':
+        self.normalization = normalization
+        if self.normalization =='batch':
             self.norm = nn.BatchNorm1d(output_dim)
-        elif self.norm == 'instance':
+        elif self.normalization == 'instance':
             self.norm = nn.InstanceNorm1d(output_dim)
         self.create_block()
 
