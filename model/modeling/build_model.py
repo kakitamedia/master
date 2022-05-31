@@ -21,8 +21,8 @@ class ModelWithLoss(nn.Module):
         self.detector = build_detector(cfg)
         self.loss_fn = DetectorLoss(cfg)
 
-        # self.discriminator = build_discriminator(cfg)
-        # self.d_loss_fn = DiscriminatorLoss(cfg)
+        self.discriminator = build_discriminator(cfg)
+        self.d_loss_fn = DiscriminatorLoss(cfg)
 
         if cfg.SOLVER.IMAGENET_PRETRAINED:
             self._load_imagenet_pretrained_model(cfg.SOLVER.IMAGENET_PRETRAINED_MODEL)
