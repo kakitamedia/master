@@ -19,11 +19,11 @@ class ResidualDiscriminator(nn.Module):
     def __init__(self, cfg):
         super(ResidualDiscriminator, self).__init__()
 
-        feat = cfg.MODEL.DISCRIMINATOR.HIDDEN_CHANNEL
-        activation = cfg.MODEL.DISCRIMINATOR.ACTIVATION
-        normalization = cfg.MODEL.DISCRIMINATOR.NORMALIZATION
-        input_channel = cfg.MODEL.DISCRIMINATOR.INPUT_CHANNEL
-        output_channel = len(cfg.MODEL.DOWN_RATIOS)
+        feat = cfg.MODEL.DISCRIMINATOR.HIDDEN_CHANNEL  # 64
+        activation = cfg.MODEL.DISCRIMINATOR.ACTIVATION  # 'lrelu'
+        normalization = cfg.MODEL.DISCRIMINATOR.NORMALIZATION  # 'spectral'
+        input_channel = cfg.MODEL.DISCRIMINATOR.INPUT_CHANNEL  # 64
+        output_channel = len(cfg.MODEL.DOWN_RATIOS)  # 3
 
         num_layers = 5
 

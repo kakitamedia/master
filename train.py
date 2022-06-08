@@ -47,7 +47,7 @@ def train(args, cfg):
 
     print('Loading Datasets...')
     data_loader = {}
-
+    # BOX_THRESHOLD [0.3, 0.95, 0.95], DOWN_RATIOS = [4, 2, 1]
     train_transforms = [TrainTransform(cfg, cfg.MODEL.DOWN_RATIOS[i], cfg.SOLVER.DATA.BOX_THRESHOLD[i]) if i in cfg.MODEL.VALID_SCALE else DummyTransform() for i in range(len(cfg.MODEL.DOWN_RATIOS))]
     # train_transforms = [TrainTransform(cfg, down_ratio) for down_ratio in cfg.MODEL.DOWN_RATIOS]
     train_target_transforms = [MakeHeatmap(cfg, cfg.MODEL.DOWN_RATIOS[i]) if i in cfg.MODEL.VALID_SCALE else DummyTargetTransform() for i in range(len(cfg.MODEL.DOWN_RATIOS))]

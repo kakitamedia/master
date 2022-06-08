@@ -38,20 +38,35 @@ class ModelWithLoss(nn.Module):
         self.valid_scale = cfg.MODEL.VALID_SCALE
         self.mixed_precision = cfg.MIXED_PRECISION
         self.gp = cfg.SOLVER.DISCRIMINATOR.GP
-        self.gp_weight = cfg.SOLVER.DISCRIMINATOR.GP_WEIGHT
+        self.gp_weight = cfg.SOLVER.DISCRIMINATOR.GP_WEIGHT  # ?
 
         self.temp = 0
 
+        # ------------------------
+        self.discriminator_masking = cfg.MODEL.DISCRIMINATOR.MASKING
+        self.normalize_loss = cfg.MODEL.DISCRIMINATOR.NORMALIZE_LOSS_WITH_MASK
+        # ------------------------
+
     def forward(self, images, targets, pretrain=False):
+
+        targets = [{k:v.to('cuda', non_blocking=True) for k, v in target.items()} for target in targets]
+
         with torch.cuda.amp.autocast(enabled=(self.mixed_precision and not pretrain)):
             images = [x.to('cuda', non_blocking=True) for x in images]
             features = [None for _ in range(len(images))]
             predictions = [None for _ in range(len(images))]
             adv_predictions = [None for _ in range(len(images))]
             for i in self.valid_scale:
-                feat = self.extractors[i](images[i])
-                pred = self.detector(feat)
-                adv_pred = self.discriminator(feat)
+                feat = self.extractors[i](images[i]) # down ratio = [4, 2, 1], UNet features torch.Size([32, 64, 128, 128])
+                pred = self.detector(feat)  # CenterNet with backbone resnet18, 'hm', 'wh', 'reg', single detector
+                adv_pred = self.discriminator(feat)  # torch.Size([32, 3, 128, 128])
+
+                if self.discriminator_masking:  # Changing the predictions to 0s for locations with value 0 in the mask
+                    b, ch, h, w = adv_pred.shape  # torch.Size([32, 3, 128, 128])
+                    # masks (b, Nc, h, w), Nc number of classes
+                    mask = targets[i]['binary_masks']  # num_mask, height, width
+                    adv_pred = torch.mul(adv_pred[:, None, :, :, :], mask[:, :, None, :, :]).contiguous().\
+                        view(-1, ch, h, w)
 
                 features[i] = feat
                 predictions[i] = pred
@@ -61,12 +76,15 @@ class ModelWithLoss(nn.Module):
             #     visualize_feature(copy(feat).detach().cpu()[0], self.temp, i)
             # self.temp += 1
 
-
-        targets = [{k:v.to('cuda', non_blocking=True) for k, v in target.items()} for target in targets]
+        # targets = [{k:v.to('cuda', non_blocking=True) for k, v in target.items()} for target in targets]
 
         det_loss, det_loss_dict = self.loss_fn(features, predictions, adv_predictions, targets)
-        dis_loss, dis_loss_dict = self.d_loss_fn(adv_predictions)
-
+        # dis_loss, dis_loss_dict = self.d_loss_fn(adv_predictions)
+        # -------------------------
+        # list of masks, they are token as input but not necessarily used
+        masks = [ret['binary_masks'] for ret in targets]
+        dis_loss, dis_loss_dict = self.d_loss_fn(adv_predictions, masks)
+        # -------------------------
         loss_dict = {**det_loss_dict, **dis_loss_dict}
 
         if self.gp:

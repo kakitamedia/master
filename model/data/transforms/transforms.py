@@ -155,6 +155,7 @@ class RandomCrop:
 
                 boxes[:, 0::2] = np.clip(boxes[:, 0::2], 0, self.size[1])
                 boxes[:, 1::2] = np.clip(boxes[:, 1::2], 0, self.size[0])
+
                 cropped_box_sizes = boxes[:, 2:] - boxes[:, :2]
 
                 # Remove invalid boxes
@@ -294,13 +295,16 @@ class Clip:
 class MakeHeatmap:
     def __init__(self, cfg, down_ratio):
         self.num_classes = cfg.MODEL.NUM_CLASSES
-        self.max_objects = cfg.SOLVER.DATA.MAX_OBJECTS
+        self.max_objects = cfg.SOLVER.DATA.MAX_OBJECTS  # MAX_OBJECTS = 128
         self.down_ratio = down_ratio
         self.image_target = cfg.MODEL.DETECTOR.IMAGE_INPUT
 
         from torchvision.transforms import Resize
-        self.down_scaling = Resize(cfg.SOLVER.DATA.HEATMAP_SIZE, antialias=True)
+        self.down_scaling = Resize(cfg.SOLVER.DATA.HEATMAP_SIZE, antialias=True)  # HEATMAP_SIZE = (128, 128)
 
+        # ---------------------  instance_level or class_level
+        self.num_mask = 1 if cfg.MODEL.DISCRIMINATOR.MASKING_CLASS_AGNOSTIC else cfg.MODEL.NUM_CLASSES
+        # ---------------------
 
     def _gaussian_radius(self, box_size, min_overlap=0.7):
         height, width = box_size
@@ -353,12 +357,17 @@ class MakeHeatmap:
         num_objects = min(len(boxes), self.max_objects)
         height, width = int(height / self.down_ratio), int(width / self.down_ratio)
         boxes /= self.down_ratio
-
+        # (80, 128, 128)
         heatmap = np.zeros((self.num_classes, height, width), dtype=np.float32)
         wh = np.zeros((self.max_objects, 2), dtype=np.float32)
         reg = np.zeros((self.max_objects, 2), dtype=np.float32)
         ind = np.zeros((self.max_objects), dtype=np.int64)
         reg_mask = np.zeros((self.max_objects), dtype=np.uint8)
+
+        # ---------------------
+        # Binary mask
+        binary_masks = np.zeros((self.num_mask, height, width), dtype=np.uint8)
+        # ----------------------------------------
 
         for i in range(num_objects):
             box = boxes[i]
@@ -377,6 +386,13 @@ class MakeHeatmap:
             reg[i] = center - center_int
             reg_mask[i] = 1
 
+            # ---------------------
+            x1, y1, x2, y2 = list(map(int, box))  # to int values, x2, y2 can be 128 because x2 = x1 + w (w can be 128)
+            if self.num_mask == 1:  # instance_level mask
+                binary_masks[0, y1:y2, x1:x2] = 1
+            else:  # class_level mask
+                binary_masks[class_id, y1:y2, x1:x2] = 1
+            # ----------------------------------------
 
         ret = {
             'hm': torch.from_numpy(heatmap),
@@ -384,6 +400,8 @@ class MakeHeatmap:
             'reg_mask': torch.from_numpy(reg_mask),
             'ind': torch.from_numpy(ind),
             'wh': torch.from_numpy(wh),
+
+            'binary_masks': torch.from_numpy(binary_masks).bool(),  # ---------------------
             }
         
         if self.image_target:

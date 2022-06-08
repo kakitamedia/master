@@ -8,7 +8,7 @@ class TrainTransform:
         self.augment = Compose([
             ConvertFromInts(),
             RandomResize(resize_range=cfg.SOLVER.DATA.RESIZE_RANGE),
-            RandomCrop(size=[int(x*down_ratio) for x in cfg.SOLVER.DATA.HEATMAP_SIZE], box_threshold=box_threshold),
+            RandomCrop(size=[int(x*down_ratio) for x in cfg.SOLVER.DATA.HEATMAP_SIZE], box_threshold=box_threshold),  # HEATMAP_SIZE = (128, 128)
             RandomMirror(),
             PhotometricDistort(),
             Clip(),

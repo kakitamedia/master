@@ -39,10 +39,10 @@ class COCODataset(Dataset):
             # when testing, all images used.
             self.ids = list(self.coco.imgs.keys())
         coco_categories = sorted(self.coco.getCatIds())
-        self.coco_id_to_contiguous_id = {coco_id: i + 1 for i, coco_id in enumerate(coco_categories)}
+        self.coco_id_to_contiguous_id = {coco_id: i + 1 for i, coco_id in enumerate(coco_categories)}  # 1-index
         self.contiguous_id_to_coco_id = {v: k for k, v in self.coco_id_to_contiguous_id.items()}
 
-        self.contents_match = cfg.SOLVER.CONTENTS_MATCH
+        self.contents_match = cfg.SOLVER.CONTENTS_MATCH  # False
         from torchvision.transforms import Resize
         self.resize_x2 = Resize((256, 256), antialias=True)
         self.resize_x4 = Resize((128, 128), antialias=True)
@@ -63,7 +63,7 @@ class COCODataset(Dataset):
                     images[1], boxes[1], labels[1] = self.resize_x2(copy(images[i])), copy(boxes[i]/2), copy(labels[i])
                     images[2], boxes[2], labels[2] = self.resize_x4(copy(images[i])), copy(boxes[i]/4), copy(labels[i])
                     break
-
+        # TODO:
         if self.target_transform:
             targets = []
             for i in range(len(self.target_transform)):
