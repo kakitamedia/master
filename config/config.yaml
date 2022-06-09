@@ -6,7 +6,7 @@ SOLVER:
   BATCH_SIZE: 8
   PRETRAINED: True
   PRETRAINED_MODEL: 'output/singlescale_baseline_Adam/model/iteration_900000.pth'
-  ADV_LOSS_FN: 'hinge'
+  ADV_LOSS_FN: 'wasserstain'
   DETECTOR:
     INIT_TRAIN_ITER: 0
     ADV_LOSS_WEIGHT: 0.1
