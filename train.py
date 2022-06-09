@@ -69,13 +69,10 @@ def train(args, cfg):
 
         data_loader['val'] = val_loader
 
-    optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, list(model.sr_models.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
+    optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, list(model.extractors.parameters()) + list(model.detector.parameters())), lr=cfg.SOLVER.DETECTOR.LR)
     scheduler = MultiStepLR(optimizer, cfg.SOLVER.LR_DECAY)
-    if cfg.MODEL.DISCRIMINATOR.FLAG:
-        d_optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
-        d_scheduler = MultiStepLR(d_optimizer, cfg.SOLVER.LR_DECAY)
-    else:
-        d_optimizer, d_scheduler = None, None
+    d_optimizer = torch.optim.Adam(filter(lambda p:p.requires_grad, model.discriminator.parameters()), lr=cfg.SOLVER.DISCRIMINATOR.LR)
+    d_scheduler = MultiStepLR(d_optimizer, cfg.SOLVER.LR_DECAY)
 
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.MIXED_PRECISION)
 
