@@ -26,7 +26,7 @@ _C.MODEL.DISCRIMINATOR.ACTIVATION = 'lrelu'
 _C.MODEL.DISCRIMINATOR.NORMALIZATION = 'spectral'
 
 # ---------------------
-_C.MODEL.DISCRIMINATOR.MASKING = True  # using masking (True) or not (False) in discriminator
+_C.MODEL.DISCRIMINATOR.MASKING = False  # using masking (True) or not (False) in discriminator
 _C.MODEL.DISCRIMINATOR.MASKING_CLASS_AGNOSTIC = False  # instance_level (True) or class_level (False)
 # Normalize the loss only if (MODEL.DISCRIMINATOR.MASKING) = True AND
 #   (MODEL.DISCRIMINATOR.NORMALIZE_LOSS_WITH_MASK = True)
@@ -34,7 +34,7 @@ _C.MODEL.DISCRIMINATOR.NORMALIZE_LOSS_WITH_MASK = True
 # ---------------------
 
 _C.SOLVER = CN()
-_C.SOLVER.BATCH_SIZE = 32
+_C.SOLVER.BATCH_SIZE = 8
 _C.SOLVER.MAX_ITER = 900000
 _C.SOLVER.LR_DECAY = [400000, 800000]
 _C.SOLVER.SYNC_BATCHNORM = True
