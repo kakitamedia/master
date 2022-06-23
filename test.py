@@ -8,28 +8,7 @@ from torch.utils.data.sampler import SequentialSampler, BatchSampler
 
 from model.config import cfg
 
-
-def test(args, cfg):
-    device = torch.device('cuda')
-    model = 
-    print('------------Model Architecture-------------')
-    print(model)
-
-    print('Loading Datasets...')
-    test_transforms = 
-    test_dataset = 
-    sampler = 
-    batch_sampler = BatchSampler(sampler=sampler, batch_size=args.batch_size, drop_last=False)
-    test_loader = DataLoader(test_dataset, num_workers=args.num_workers, batch_sampler=batch_sampler)
-
-    model.load_state_dict(torch.load(args.trained_model))
-
-    if args.num_gpus > 1:
-        model = torch.nn.DataParallel(model, device_ids=list(range(args.num_gpus)))
-
-    do_test(args, cfg, model, test_loader, device)
-
-def main():
+def parse_args():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--config_file', type=str, default='', metavar='FILE', help='')
     parser.add_argument('--output_dirname', type=str, default='')
@@ -38,7 +17,29 @@ def main():
     parser.add_argument('--num_gpus', type=int, default=1)
     parser.add_argument('--trained_model', type=str, default='')
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+def test(args, cfg):
+    model = 
+    print('------------Model Architecture-------------')
+    print(model)
+
+    print('Loading Datasets...')
+    test_transforms = 
+    test_dataset = 
+    sampler = SequentialSampler(test_dataset) 
+    batch_sampler = BatchSampler(sampler=sampler, batch_size=args.batch_size, drop_last=False)
+    test_loader = DataLoader(test_dataset, num_workers=args.num_workers, batch_sampler=batch_sampler)
+
+    model.load_state_dict(torch.load(args.trained_model))
+
+    if args.num_gpus > 1:
+        model = torch.nn.DataParallel(model, device_ids=list(range(args.num_gpus)))
+
+    do_test(args, cfg, model, test_loader)
+
+def main():
+    args = parse_args()
 
     if len(args.config_file) > 0:
         print('Configuration file is loaded from {}'.format(args.config_file))
@@ -49,7 +50,7 @@ def main():
         output_dirname = os.path.join('output', str(dt_now.date()) + '_' + str(dt_now.time()))
     else:
         output_dirname = args.output_dirname
-    cfg.OUTPUT_DIRNAME = output_dirname
+    cfg.OUTPUT_DIR = output_dirname
     cfg.freeze()
 
     print('OUTPUT DIRNAME: {}'.format(cfg.OUTPUT_DIR))

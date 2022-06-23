@@ -1,15 +1,9 @@
-import math
-
-import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from mmcv.ops.deform_conv import DeformConv2d
-from mmcv.ops.modulated_deform_conv import ModulatedDeformConv2d
-
-
-class BlockBase(nn.Module):
+class BaseBlock(nn.Module):
     def __init__(self, output_dim, bias, activation, normalization):
-        super(BlockBase, self).__init__()
+        super(BaseBlock, self).__init__()
         self.output_dim = output_dim
         self.bias = bias
         self.activation = activation
@@ -23,6 +17,8 @@ class BlockBase(nn.Module):
             self.norm = nn.InstanceNorm2d(self.output_dim)
         elif self.normalization == 'group':
             self.norm = nn.GroupNorm(32, self.output_dim)
+        elif self.normalization == 'layer':
+            self.norm = nn.LayerNorm(self.output_dim)
         elif self.normalization == 'spectral':
             self.norm = None
             self.layer = nn.utils.spectral_norm(self.layer)
@@ -68,96 +64,34 @@ class BlockBase(nn.Module):
 
         return x
 
-class DenseBlock(BlockBase):
+
+class DenseBlock(BaseBlock):
     def __init__(self, input_dim, output_dim, bias=False, activation='relu', normalization='batch'):
         super().__init__(output_dim, bias, activation, normalization)
         self.layer = nn.Linear(input_dim, output_dim, bias=bias)
+        self.create_block()
 
         ### Overwrite normalizing layer for 1D version
         self.normalization = normalization
-        if self.normalization =='batch':
+        if self.norm =='batch':
             self.norm = nn.BatchNorm1d(output_dim)
-        elif self.normalization == 'instance':
+        elif self.norm == 'instance':
             self.norm = nn.InstanceNorm1d(output_dim)
-        self.create_block()
+        
 
-class ConvBlock(BlockBase):
+class ConvBlock(BaseBlock):
     def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=1, dilation=1, groups=1, bias=False, activation='relu', normalization='batch'):
         super().__init__(output_dim, bias, activation, normalization)
         self.layer = nn.Conv2d(input_dim, output_dim, kernel_size, stride, padding, dilation=dilation, groups=groups, bias=bias)
         self.create_block()
 
 
-class DeconvBlock(BlockBase):
+class DeconvBlock(BaseBlock):
     def __init__(self, input_dim, output_dim, kernel_size=3, stride=1, padding=1, dilation=1, groups=1, bias=False, activation='relu', normalization='batch'):
         super().__init__(output_dim, bias, activation, normalization)
         self.layer = nn.ConvTranspose2d(input_dim, output_dim, kernel_size, stride, padding, dilation=dilation, groups=groups, bias=bias)
         self.create_block()
 
-
-class DeformableConvBlock(BlockBase):
-    def __init__(self, input_dim, output_dim, offset_dim=None, kernel_size=3, stride=1, padding=1, deform_groups=1, bias=False, activation='relu', normalization='batch'):
-        super().__init__(output_dim, bias, activation, normalization)
-        
-        if offset_dim is None:
-            offset_dim = input_dim
-        
-        self.layer = DeformConv2d(input_dim, output_dim, kernel_size, stride, padding, bias=bias)
-        self.offset_conv = nn.Conv2d(offset_dim, deform_groups * 2 * kernel_size**2, kernel_size, stride, padding, bias=True)
-            
-        self.create_block()
-        self.offset_conv.weight.data.zero_()
-        self.offset_conv.bias.data.zero_()
-
-
-    def forward(self, x, offset=None):
-        if offset is None:
-            offset = self.offset_conv(x)
-        else:
-            offset = self.offset_conv(offset)
-
-        x = self.layer(x, offset)
-
-        if self.norm is not None:
-            x = self.norm(x)
-
-        if self.act is not None:
-            x = self.act(x)      
-
-        return x
-
-class ModulatedDeformableBlock(BlockBase):
-    def __init__(self, input_dim, output_dim, offset_dim=None, kernel_size=3, stride=1, padding=1, deform_groups=1, bias=False, activation='relu', normalization='batch'):
-        super().__init__(output_dim, bias, activation, normalization)
-        if offset_dim is None:
-            offset_dim = input_dim
-        
-        self.layer = ModulatedDeformConv2d(input_dim, output_dim, kernel_size, stride, padding, bias=bias)
-        self.offset_conv = nn.Conv2d(offset_dim, deform_groups * 3 * kernel_size**2, kernel_size, stride, padding, bias=True)
-            
-        self.offset_conv.weight.data.zero_()
-        self.offset_conv.bias.data.zero_()
-        self.create_block()
-
-
-    def forward(self, x, offset=None):
-        if offset is None:
-            o1, o2, mask = torch.chunk(self.offset_conv(x), 3, dim=1)
-        else:
-            o1, o2, mask = torch.chunk(self.offset_conv(offset), 3, dim=1)
-
-        offset = torch.cat((o1, o2), dim=1)
-        mask = torch.sigmoid(mask)
-
-        x = self.layer(x, offset, mask)
-
-        if self.norm is not None:
-            x = self.norm(x)
-
-        if self.act is not None:
-            x = self.act(x)
-            
-        return x
 
 class ResidualBlock(nn.Module):
     def __init__(self, input_dim, output_dim, num_convs=2, kernel_size=3, stride=1, padding=1, bias=False, activation='relu', normalization='batch'):
@@ -266,3 +200,8 @@ class ResidualBlock(nn.Module):
                 x = self.acts[i](x)
 
         return x
+
+
+class ConvNeXtBlock(nn.Module):
+    def __init__(self, input_dim, output_dim, bias=False, activation='relu', normalization='batch'):
+        

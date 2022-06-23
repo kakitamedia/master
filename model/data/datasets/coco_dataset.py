@@ -42,40 +42,21 @@ class COCODataset(Dataset):
         self.coco_id_to_contiguous_id = {coco_id: i + 1 for i, coco_id in enumerate(coco_categories)}  # 1-index
         self.contiguous_id_to_coco_id = {v: k for k, v in self.coco_id_to_contiguous_id.items()}
 
-        self.contents_match = cfg.SOLVER.CONTENTS_MATCH  # False
-        from torchvision.transforms import Resize
-        self.resize_x2 = Resize((256, 256), antialias=True)
-        self.resize_x4 = Resize((128, 128), antialias=True)
-
     def __getitem__(self, index):
         image_id = self.ids[index]
-        boxes, labels = self._get_annotation(image_id)
         image = self._read_image(image_id)
 
-        images = [copy(image) for _ in range(len(self.transform))]
-        boxes = [copy(boxes) for _ in range(len(self.transform))]
-        labels = [copy(labels) for _ in range(len(self.transform))]
+        if self.inference:
+            return image
 
-        if self.transform:
-            for i in range(len(self.transform)):
-                images[i], boxes[i], labels[i] = self.transform[i](images[i], boxes[i], labels[i])
-                if self.contents_match:
-                    images[1], boxes[1], labels[1] = self.resize_x2(copy(images[i])), copy(boxes[i]/2), copy(labels[i])
-                    images[2], boxes[2], labels[2] = self.resize_x4(copy(images[i])), copy(boxes[i]/4), copy(labels[i])
-                    break
-        # TODO:
-        if self.target_transform:
-            targets = []
-            for i in range(len(self.target_transform)):
-                targets.append(self.target_transform[i](images[i], boxes[i], labels[i]))
+        boxes, labels = self._get_annotation(image_id)
 
-            # save_heatmap(copy(images[0]), copy(targets[0]['hm']), copy(targets[0]['ind']), image_id, 0)
-            # save_heatmap(copy(images[1]), copy(targets[1]['hm']), copy(targets[1]['ind']), image_id, 1)
-            # save_heatmap(copy(images[2]), copy(targets[2]['hm']), copy(targets[2]['ind']), image_id, 2)
+        if self.transforms:
+            image, boxes, labels = self.transforms(image, boxes, labels)
 
-            return images, targets
+        targets = self.target_transform(image, boxes, labels)
 
-        return images
+        return image, targets
 
     def _read_image(self, image_id):
         file_name = self.coco.loadImgs(image_id)[0]['file_name']
